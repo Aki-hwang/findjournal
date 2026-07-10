@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Journal Finder — 정확도 평가 (Benchmark)</title>
+<style>
+  body{background:#0f1218;color:#e6e9f2;font-family:'Pretendard',ui-monospace,'Segoe UI',sans-serif;line-height:1.6;margin:0}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:1.5rem;letter-spacing:-.02em}
+  h2{font-size:1rem;margin-top:28px;color:#9aa3bd}
+  p.lead{color:#9aa3bd;font-size:.9rem}
+  .card{background:#171b26;border:1px solid #2a3145;border-radius:12px;padding:18px;margin-top:14px}
+  label{display:block;font-size:.78rem;color:#9aa3bd;margin:10px 0 5px;font-weight:600}
+  input,select{background:#0f1218;border:1px solid #2a3145;color:#e6e9f2;border-radius:8px;padding:9px 11px;font-family:inherit;font-size:.86rem;width:100%}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+  button{background:linear-gradient(100deg,#5b6cff,#9b6cff);color:#fff;border:none;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer;font-family:inherit;font-size:.88rem;margin-top:14px}
+  button:disabled{opacity:.5;cursor:wait}
+  button.sec{background:#232838;color:#c3cade}
+  pre{background:#0b0e14;border:1px solid #222839;border-radius:9px;padding:13px;overflow:auto;font-size:.76rem;line-height:1.5;max-height:420px}
+  table{width:100%;border-collapse:collapse;font-size:.8rem;margin-top:10px}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid #232838}
+  th{color:#9aa3bd;font-weight:700}
+  .good{color:#4ade80;font-weight:700}
+  .bad{color:#f87171}
+  .warn{background:#2a2314;border:1px solid #fbbf24;color:#fbbf24;padding:11px 13px;border-radius:9px;font-size:.82rem;margin-top:12px}
+  .muted{color:#6b7391;font-size:.76rem}
+  progress{width:100%;height:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📊 Journal Finder — 정확도 평가</h1>
+  <p class="lead">
+    “정답이 있는 논문”으로 추천 알고리즘을 채점합니다. 무작위 표본 논문의 <b>제목·초록만</b> 넣고 돌린 뒤,
+    <b>실제 게재된 저널</b>이 추천 목록 몇 위에 나오는지 측정합니다. 논문 자신은 후보에서 제외합니다(정답 유출 방지).
+  </p>
+
+  <div class="warn">
+    OpenAlex 무료 예산은 계정·IP당 하루 $1(요청 약 1,000회)입니다. 표본 1편당 약 1~3회를 소모하므로
+    하루 300~600편 정도가 현실적입니다. 아래에 API 키를 넣으면 본인 예산을 씁니다(브라우저에만 저장).
+  </div>
+
+  <div class="card">
+    <label for="key">OpenAlex API 키 (선택)</label>
+    <input id="key" type="text" placeholder="비워두면 공용 무료 예산" autocomplete="off">
+    <div class="row">
+      <div><label for="perField">분야당 표본 수</label><input id="perField" type="number" value="12" min="2" max="50"></div>
+      <div><label for="alpha">규모 정규화 α</label><input id="alpha" type="number" value="0.35" step="0.05" min="0" max="1"></div>
+      <div><label for="years">검색 기간(년)</label><input id="years" type="number" value="5" min="1" max="20"></div>
+      <div><label for="seed">시드</label><input id="seed" type="number" value="20260710"></div>
+    </div>
+    <button id="run">▶ 벤치마크 실행</button>
+    <button id="sweep" class="sec">α 스윕 (재수집 없이)</button>
+    <button id="dl" class="sec">⬇ 결과 CSV</button>
+    <progress id="bar" value="0" max="100"></progress>
+    <p class="muted" id="stat">대기 중…</p>
+  </div>
+
+  <h2>결과</h2>
+  <div class="card"><div id="out">아직 실행하지 않았습니다.</div></div>
+
+  <h2>실패 사례 (정답이 15위 밖)</h2>
+  <div class="card"><pre id="fails">—</pre></div>
+</div>
+
+<script>
+"use strict";
+const API = "https://api.openalex.org";
+const FIELDS = [22,33,27,12,31,17,11,13,23,20,25,14,32,36,19,16,26,28,18,24,21,29,30,35,15,34];
+const STOP = new Set(("a an the and or but of for to in on with by from as at is are was were be been being this that these those " +
+"we our us it its their they i you he she which who what when where why how all any both each few more most other some such " +
+"no nor not only own same so than too very can will just should now using used use novel present presents proposed shows show " +
+"study studies paper work works results result method methods approach here also into over under between during via while about " +
+"based new high highly real time first second one two three toward towards through there significant significantly compared " +
+"analysis data model models effect effects role").split(/\s+/));
+
+const norm = s => String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+const deInvert = idx => { if(!idx) return ""; const pos=[]; for(const w in idx) for(const p of idx[w]) pos[p]=w; return pos.join(" "); };
+function extractKeywords(title, abs, n){
+  const txt = ((title||"")+" "+(title||"")+" "+(abs||"")).toLowerCase();
+  const toks = txt.match(/[a-z][a-z0-9-]{2,}/g) || [];
+  const f = Object.create(null);
+  for(const t of toks){ if(STOP.has(t)) continue; f[t]=(f[t]||0)+1; }
+  return Object.keys(f).sort((a,b)=>f[b]-f[a]).slice(0,n);
+}
+const key = () => document.getElementById("key").value.trim();
+const auth = () => key() ? "api_key="+encodeURIComponent(key()) : "mailto=openalex@example.org";
+class Budget extends Error{}
+async function ax(url){
+  const r = await fetch(url + (url.includes("?")?"&":"?") + auth());
+  if(r.status === 429) throw new Budget("daily budget exhausted");
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return r.json();
+}
+const setStat = s => document.getElementById("stat").textContent = s;
+const setBar = (v,m) => { const b=document.getElementById("bar"); b.max=m; b.value=v; };
+
+let GOLD = [], POOL = {}, LAST = null;
+
+/* 1. Stratified random gold set */
+async function buildGold(perField, seed){
+  GOLD = []; const seen = new Set();
+  for(let i=0;i<FIELDS.length;i++){
+    const f = FIELDS[i];
+    setStat(`정답지 수집 ${i+1}/${FIELDS.length} (분야 ${f})`); setBar(i+1, FIELDS.length);
+    const u = `${API}/works?filter=primary_topic.field.id:fields/${f},type:article,has_abstract:true,`+
+              `primary_location.source.is_core:true,from_publication_date:2023-06-01`+
+              `&sample=${perField}&seed=${seed}&per-page=${perField}`+
+              `&select=title,abstract_inverted_index,primary_location,primary_topic`;
+    let j; try{ j = await ax(u); }catch(e){ if(e instanceof Budget) throw e; continue; }
+    for(const w of (j.results||[])){
+      const s = w.primary_location && w.primary_location.source;
+      if(!s || !s.issn_l || !w.title) continue;
+      const abs = deInvert(w.abstract_inverted_index);
+      if(abs.length < 200) continue;
+      const k = norm(w.title); if(seen.has(k)) continue; seen.add(k);
+      GOLD.push({ title:w.title, abs, journal:s.display_name, srcId:s.id.split("/").pop(),
+                  field: w.primary_topic && w.primary_topic.field ? w.primary_topic.field.display_name : "?" });
+    }
+    await new Promise(r=>setTimeout(r,80));
+  }
+  return GOLD.length;
+}
+
+/* 2. Candidate pool — fetched once per paper, then reused by every scoring variant */
+async function fetchPool(p, years){
+  const kw = extractKeywords(p.title, p.abs, 8);
+  if(kw.length < 2) return {works:[]};
+  const from = new Date(); from.setFullYear(from.getFullYear()-years);
+  const filter = "type:article,from_publication_date:"+from.toISOString().slice(0,10);
+  const sel = "select=display_name,relevance_score,publication_year,primary_location";
+  const pool = new Map();
+  for(let k=Math.min(6,kw.length); k>=2; k--){
+    let j; try{
+      j = await ax(`${API}/works?search=${encodeURIComponent(kw.slice(0,k).join(" "))}&filter=${filter}&sort=relevance_score:desc&per-page=100&${sel}`);
+    }catch(e){ if(e instanceof Budget) throw e; continue; }
+    for(const w of (j.results||[])){
+      if(pool.has(w.display_name)) continue;
+      const s = w.primary_location && w.primary_location.source;
+      pool.set(w.display_name, { t:w.display_name, rel:w.relevance_score||0, yr:w.publication_year||null,
+        sid:(s && s.type==="journal" && s.issn_l) ? s.id.split("/").pop() : null,
+        core:!!(s&&s.is_core), sname: s?s.display_name:null });
+    }
+    if(pool.size >= 100) break;
+  }
+  return { works:[...pool.values()].slice(0,180) };
+}
+
+/* 3. Journal sizes (for size normalisation), batched 50 per call */
+let SIZE = {};
+async function fetchSizes(ids){
+  const need = ids.filter(i => !(i in SIZE));
+  for(let i=0;i<need.length;i+=50){
+    const batch = need.slice(i,i+50);
+    let j; try{ j = await ax(`${API}/sources?filter=ids.openalex:${batch.join("|")}&per-page=50&select=id,works_count`); }
+    catch(e){ if(e instanceof Budget) throw e; break; }
+    for(const s of (j.results||[])) SIZE[s.id.split("/").pop()] = s.works_count || 2000;
+    batch.forEach(b => { if(!(b in SIZE)) SIZE[b]=2000; });
+  }
+}
+
+/* 4. Scoring — the thing we are actually tuning */
+function score(p, alpha){
+  const cached = POOL[norm(p.title)];
+  if(!cached) return [];
+  const self = norm(p.title);
+  const works = cached.works.filter(w => norm(w.t) !== self);   // no leakage
+  const maxRel = Math.max(...works.map(w=>w.rel), 1);
+  const nowYr = new Date().getFullYear();
+  const agg = Object.create(null);
+  for(const w of works){
+    if(!w.sid || !w.core) continue;
+    if(!agg[w.sid]) agg[w.sid] = { sid:w.sid, name:w.sname, raw:0 };
+    const rel = w.rel / maxRel;
+    const rec = Math.max(0, 1 - (nowYr - (w.yr||nowYr))/12);
+    agg[w.sid].raw += rel * (0.75 + 0.25*rec);
+  }
+  const list = Object.values(agg);
+  for(const j of list){
+    const size = Math.max(200, SIZE[j.sid] || 2000);
+    j.score = alpha === 0 ? j.raw : j.raw / Math.pow(size, alpha);
+  }
+  return list.sort((a,b)=>b.score-a.score);
+}
+
+function metrics(alpha){
+  const rows = GOLD.map(p => {
+    const recs = score(p, alpha);
+    const rank = recs.findIndex(r => r.sid === p.srcId);
+    return { title:p.title, field:p.field, truth:p.journal, rank: rank<0?null:rank+1, top1: recs[0]?recs[0].name:"-" };
+  }).filter(r => POOL[norm(r.title)]);
+  const hit = n => rows.filter(r=>r.rank && r.rank<=n).length / rows.length * 100;
+  const mrr = rows.reduce((s,r)=> s + (r.rank ? 1/r.rank : 0), 0) / rows.length;
+  return { alpha, n:rows.length, r1:+hit(1).toFixed(1), r5:+hit(5).toFixed(1), r10:+hit(10).toFixed(1),
+           r15:+hit(15).toFixed(1), mrr:+mrr.toFixed(3), rows };
+}
+
+function renderTable(list){
+  let h = "<table><tr><th>α</th><th>N</th><th>Recall@1</th><th>@5</th><th>@10</th><th>@15</th><th>MRR</th></tr>";
+  const best = Math.max(...list.map(m=>m.r10));
+  for(const m of list){
+    h += `<tr><td>${m.alpha}</td><td>${m.n}</td><td>${m.r1}%</td><td>${m.r5}%</td>`+
+         `<td class="${m.r10===best?'good':''}">${m.r10}%</td><td>${m.r15}%</td><td>${m.mrr}</td></tr>`;
+  }
+  document.getElementById("out").innerHTML = h + "</table>";
+}
+
+async function runAll(){
+  const btn = document.getElementById("run"); btn.disabled = true;
+  SIZE = {}; POOL = {};
+  try{
+    const perField = +document.getElementById("perField").value;
+    const years = +document.getElementById("years").value;
+    const n = await buildGold(perField, +document.getElementById("seed").value);
+    setStat(`정답지 ${n}편 · 후보 풀 수집 중…`);
+
+    let done = 0, idx = 0;
+    const CONC = 4;
+    await Promise.all(Array.from({length:CONC}, async () => {
+      while(idx < GOLD.length){
+        const p = GOLD[idx++];
+        POOL[norm(p.title)] = await fetchPool(p, years);
+        setBar(++done, GOLD.length);
+        if(done % 10 === 0) setStat(`후보 풀 ${done}/${GOLD.length}`);
+      }
+    }));
+
+    setStat("저널 규모 조회 중…");
+    const ids = new Set();
+    for(const k in POOL) for(const w of POOL[k].works) if(w.sid) ids.add(w.sid);
+    await fetchSizes([...ids]);
+
+    const alpha = +document.getElementById("alpha").value;
+    LAST = [metrics(0), metrics(alpha)];
+    renderTable(LAST);
+    showFails(LAST[LAST.length-1]);
+    setStat(`완료 · 정답지 ${GOLD.length}편 · 저널 ${ids.size}종`);
+  }catch(e){
+    setStat(e instanceof Budget ? "⛔ OpenAlex 일일 예산 소진 — UTC 자정 이후 재시도하거나 API 키를 넣으세요." : "오류: "+e.message);
+  }
+  btn.disabled = false;
+}
+
+function sweep(){
+  if(!Object.keys(POOL).length){ setStat("먼저 벤치마크를 실행해 후보 풀을 캐시하세요."); return; }
+  LAST = [0,0.1,0.2,0.3,0.35,0.4,0.5,0.6,0.8,1.0].map(a => metrics(a));
+  renderTable(LAST);
+  const best = LAST.slice().sort((a,b)=>b.r10-a.r10)[0];
+  showFails(best);
+  setStat(`스윕 완료 (API 호출 0회) · 최적 α=${best.alpha} → Recall@10 ${best.r10}%`);
+}
+
+function showFails(m){
+  const bad = m.rows.filter(r=>!r.rank || r.rank>15).slice(0,25);
+  document.getElementById("fails").textContent = bad.length
+    ? bad.map(r=>`[${r.field}] ${r.title.slice(0,60)}\n   정답: ${r.truth}\n   1위 : ${r.top1}  (정답 순위: ${r.rank||"목록 밖"})`).join("\n\n")
+    : "실패 사례 없음 🎉";
+}
+
+document.getElementById("run").addEventListener("click", runAll);
+document.getElementById("sweep").addEventListener("click", sweep);
+document.getElementById("dl").addEventListener("click", () => {
+  if(!LAST){ setStat("먼저 실행하세요."); return; }
+  const q = v => '"'+String(v==null?"":v).replace(/"/g,'""')+'"';
+  const head = ["alpha","n","recall@1","recall@5","recall@10","recall@15","MRR"];
+  const csv = "﻿"+head.map(q).join(",")+"\n"+
+    LAST.map(m=>[m.alpha,m.n,m.r1,m.r5,m.r10,m.r15,m.mrr].map(q).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download = "journalfinder-benchmark-"+new Date().toISOString().slice(0,10)+".csv";
+  a.click();
+});
+</script>
+</body>
+</html>
