@@ -92,6 +92,9 @@
   .chip.q2{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
   .chip.jcr{background:var(--gold-soft);border-color:transparent;color:var(--gold)}
   .chip.jcr b{color:var(--gold)}
+  .keybox{display:none;margin-top:16px;padding:16px 18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow)}
+  .keybox.show{display:block}
+  .keybox input{margin-top:10px;font-family:ui-monospace,monospace;font-size:.82rem}
   .fieldline{font-size:.77rem;color:var(--faint);margin:-6px 0 14px}
   .fieldline b{color:var(--sub)}
 
@@ -298,6 +301,20 @@
     </div>
   </div>
 
+  <div class="keybox" id="keybox">
+    <div class="jcrhead">
+      <span>🔑 <b>OpenAlex API 키</b> <span class="tag">선택</span></span>
+      <button class="rerun" id="keySave">저장</button>
+    </div>
+    <input type="text" id="apiKeyInput" placeholder="본인 계정의 API 키를 붙여넣으세요" autocomplete="off" spellcheck="false">
+    <p class="jcrdesc">
+      OpenAlex는 계정·IP당 하루 무료 예산 $1(요청 약 1,000회)을 줍니다. 여러 명이 같은 IP를 쓰면 한도에 빨리 닿습니다.
+      <a href="https://openalex.org/pricing" target="_blank" rel="noopener">무료 계정</a>의 키를 등록하면 본인 예산을 사용합니다.
+      <b>키는 이 브라우저에만 저장되며 서버로 전송되지 않습니다.</b>
+    </p>
+    <p class="jcrstatus" id="keyStatus"></p>
+  </div>
+
   <div id="status" role="status" aria-live="polite"></div>
 
   <div class="kwpanel" id="kwpanel">
@@ -328,7 +345,35 @@
 <script>
 "use strict";
 const API = "https://api.openalex.org";
-const MAILTO = "mailto=journalfinder@github.io"; // OpenAlex polite pool
+
+/* OpenAlex gives every account $1/day free at $0.001 per request (~1000 calls).
+   Anonymous callers share that budget by IP. Users can paste a personal API key
+   (stored only in this browser) to use their own budget. */
+function apiKey(){ try{ return localStorage.getItem("jf-apikey") || ""; }catch(e){ return ""; } }
+function authParam(){ const k = apiKey(); return k ? "api_key=" + encodeURIComponent(k) : "mailto=openalex@example.org"; }
+
+class BudgetError extends Error{
+  constructor(retryAfter){ super("budget"); this.retryAfter = retryAfter; }
+}
+
+/* Single fetch point so budget/rate errors surface instead of looking like "no results". */
+async function ax(url){
+  const r = await fetch(url + (url.indexOf("?") > -1 ? "&" : "?") + authParam());
+  if(r.status === 429){
+    let ra = parseInt(r.headers.get("retry-after") || "0", 10);
+    try{ const j = await r.clone().json(); if(j.retryAfter) ra = j.retryAfter; }catch(e){}
+    throw new BudgetError(ra);
+  }
+  if(!r.ok) throw new Error("OpenAlex " + r.status);
+  return r.json();
+}
+function budgetMsg(sec){
+  const h = Math.floor((sec||0)/3600), m = Math.round(((sec||0)%3600)/60);
+  const when = sec ? (h ? h + "시간 " : "") + m + "분 후" : "UTC 자정 이후";
+  return "OpenAlex의 일일 무료 요청 한도(계정·IP당 하루 약 1,000회)를 모두 사용했습니다. " +
+         "<b>" + when + "</b>에 자동으로 초기화됩니다.<br>" +
+         "지금 바로 쓰려면 아래 <b>API 키</b>를 등록하세요 — 본인 계정의 예산을 사용하며, 키는 이 브라우저에만 저장됩니다.";
+}
 
 let JOURNALS = [];      // enriched + filtered journals currently displayed
 let CUR_KEYWORDS = [];  // editable keyword state
@@ -408,10 +453,10 @@ async function searchWorks(keywords, yrs){
     const q = keywords.slice(0, k).join(" ");
     setStatus("유사 논문 검색 중… (키워드 " + k + "개)", true);
     const url = API + "/works?search=" + encodeURIComponent(q) + "&filter=" + filter +
-                "&sort=relevance_score:desc&per-page=100&" + sel + "&" + MAILTO;
+                "&sort=relevance_score:desc&per-page=100&" + sel;
     let res;
-    try{ const r = await fetch(url); res = r.ok ? await r.json() : {results:[]}; }
-    catch(e){ res = {results:[]}; }
+    try{ res = await ax(url); }
+    catch(e){ if(e instanceof BudgetError) throw e; res = {results:[]}; }
     const got = res.results || [];
     if(got.length && !used.length) used = keywords.slice(0, k);
     for(const w of got) if(!pool.has(w.display_name)) pool.set(w.display_name, w);
@@ -435,15 +480,29 @@ function aggregate(works, coreOnly){
     const id = src.id.split("/").pop();
     if(!agg[id]){
       agg[id] = { id:id, name:src.display_name, publisher:src.host_organization_name || "",
-                  issn:src.issn_l || "", core:!!src.is_core, score:0, count:0, papers:[] };
+                  issn:src.issn_l || "", core:!!src.is_core, raw:0, score:0, count:0, papers:[] };
     }
     const rel = (w.relevance_score || 0) / maxRel;
     const rec = Math.max(0, 1 - (nowYr - (w.publication_year || nowYr)) / 12);
-    agg[id].score += rel * (0.75 + 0.25 * rec);
+    agg[id].raw += rel * (0.75 + 0.25 * rec);
     agg[id].count += 1;
     if(agg[id].papers.length < 3) agg[id].papers.push(w);
   }
-  return Object.keys(agg).map(k => agg[k]).sort((a,b) => b.score - a.score).slice(0, 40);
+  return Object.keys(agg).map(k => agg[k]).sort((a,b) => b.raw - a.raw).slice(0, 60);
+}
+
+/* Mega-journal correction.
+   A journal that publishes 60,000 papers will collect more "similar" hits than a
+   specialised 3,000-paper journal purely by size. Dividing the raw score by
+   works_count^ALPHA converts "how many hits" into "how concentrated the hits are".
+   ALPHA=0 -> old behaviour (size-biased); ALPHA=1 -> pure rate. */
+const ALPHA = 0.35;
+function rescore(list){
+  for(const j of list){
+    const size = Math.max(200, j.works_count || 2000);   // floor stops tiny venues exploding
+    j.score = j.raw / Math.pow(size, ALPHA);
+  }
+  return list.sort((a,b) => b.score - a.score);
 }
 
 /* ── Field-relative percentile (NOT Clarivate JCR) ──────────────
@@ -464,46 +523,58 @@ function dominantTopic(works){
   return arr.length ? arr[0] : null;
 }
 
-async function countSources(filter){
-  try{
-    const r = await fetch(API + "/sources?filter=" + filter + "&per-page=1&select=id&" + MAILTO).then(r => r.json());
-    return (r.meta && typeof r.meta.count === "number") ? r.meta.count : null;
-  }catch(e){ return null; }
-}
-
 const quartileOf = p => p >= 75 ? "Q1" : p >= 50 ? "Q2" : p >= 25 ? "Q3" : "Q4";
 
+/* Fetch the peer citedness distribution ONCE (a few paged calls) and derive every
+   journal's percentile locally. The previous version spent one API call per journal,
+   which burned ~16 requests of the visitor's daily budget per search. */
 async function addPercentiles(list, topic){
   if(!topic) return list;
   const base = "topics.id:" + topic.id + ",is_core:true,has_issn:true";
-  const total = await countSources(base);
-  if(!total || total < 20) return list;   // peer set too small to be meaningful
+  const vals = [];
+  let cursor = "*", total = null, pages = 0;
+  while(cursor && pages < 8){
+    let r;
+    try{ r = await ax(API + "/sources?filter=" + base + "&per-page=200&cursor=" + encodeURIComponent(cursor) + "&select=summary_stats"); }
+    catch(e){ if(e instanceof BudgetError) throw e; break; }
+    if(total == null) total = r.meta && r.meta.count;
+    for(const s of (r.results || [])){
+      const v = s.summary_stats && s.summary_stats["2yr_mean_citedness"];
+      if(typeof v === "number") vals.push(v);
+    }
+    cursor = r.meta && r.meta.next_cursor;
+    pages++;
+    if(!r.results || !r.results.length) break;
+  }
+  if(vals.length < 20) return list;   // peer set too small to be meaningful
 
-  PEER_INFO = { topic:topic, total:total };
+  vals.sort((a,b) => a - b);
+  PEER_INFO = { topic:topic, total: total || vals.length };
 
-  // one count query per journal, run in small batches
-  for(let i = 0; i < list.length; i += 5){
-    const batch = list.slice(i, i + 5);
-    await Promise.all(batch.map(async j => {
-      if(j.if2 == null) return;
-      const better = await countSources(base + ",summary_stats.2yr_mean_citedness:>" + j.if2);
-      if(better == null) return;
-      j.pct = Math.max(1, Math.min(100, Math.round(100 * (1 - better / total))));
-      j.q   = quartileOf(j.pct);
-    }));
+  const pctOf = x => {
+    let lo = 0, hi = vals.length;                 // count of peers strictly below x
+    while(lo < hi){ const m = (lo + hi) >> 1; if(vals[m] < x) lo = m + 1; else hi = m; }
+    return Math.max(1, Math.min(100, Math.round(100 * lo / vals.length)));
+  };
+  for(const j of list){
+    if(j.if2 == null) continue;
+    j.pct = pctOf(j.if2);
+    j.q = quartileOf(j.pct);
   }
   return list;
 }
 
 async function enrich(list){
   setStatus("저널 지표(인용도 · OA · APC) 조회 중…", true);
-  const ids = list.map(j => j.id).join("|");
-  const sel = "select=id,display_name,summary_stats,apc_usd,is_oa,is_in_doaj,homepage_url";
-  let res;
-  try{ res = await fetch(API + "/sources?filter=ids.openalex:" + ids + "&per-page=50&" + sel + "&" + MAILTO).then(r => r.json()); }
-  catch(e){ res = {results:[]}; }
+  const sel = "select=id,display_name,summary_stats,apc_usd,is_oa,is_in_doaj,homepage_url,works_count";
   const meta = Object.create(null);
-  for(const s of (res.results || [])) meta[s.id.split("/").pop()] = s;
+  for(let i = 0; i < list.length; i += 50){                 // /sources caps at 50 ids per call
+    const ids = list.slice(i, i + 50).map(j => j.id).join("|");
+    let res;
+    try{ res = await ax(API + "/sources?filter=ids.openalex:" + ids + "&per-page=50&" + sel); }
+    catch(e){ if(e instanceof BudgetError) throw e; res = {results:[]}; }
+    for(const s of (res.results || [])) meta[s.id.split("/").pop()] = s;
+  }
 
   for(const j of list){
     const m = meta[j.id] || {};
@@ -513,8 +584,9 @@ async function enrich(list){
     j.oa   = !!m.is_oa;
     j.doaj = !!m.is_in_doaj;
     j.home = m.homepage_url || "";
+    j.works_count = m.works_count || null;
   }
-  return list;
+  return rescore(list).slice(0, 40);   // size-normalised ranking happens here
 }
 
 /* ── Run ────────────────────────────────── */
@@ -600,7 +672,12 @@ async function run(keywordsOverride){
     render();
   }catch(err){
     setStatus("");
-    document.getElementById("results").innerHTML = emptyState("⚠️", "오류가 발생했습니다", esc(err.message) + " — 잠시 후 다시 시도해 주세요.");
+    if(err instanceof BudgetError){
+      document.getElementById("results").innerHTML = emptyState("⏳", "OpenAlex 일일 요청 한도 도달", budgetMsg(err.retryAfter));
+      document.getElementById("keybox").classList.add("show");
+    }else{
+      document.getElementById("results").innerHTML = emptyState("⚠️", "오류가 발생했습니다", esc(err.message) + " — 잠시 후 다시 시도해 주세요.");
+    }
   }
   btn.disabled = false;
 }
@@ -844,6 +921,25 @@ function applyTheme(t){
 })();
 
 /* ── Wiring ─────────────────────────────── */
+(function initKeyBox(){
+  const k = apiKey();
+  if(k){
+    document.getElementById("keybox").classList.add("show");
+    document.getElementById("apiKeyInput").value = k;
+    document.getElementById("keyStatus").textContent = "✅ 저장된 키를 사용 중입니다.";
+    document.getElementById("keyStatus").style.color = "var(--good)";
+  }
+})();
+document.getElementById("keySave").addEventListener("click", () => {
+  const v = document.getElementById("apiKeyInput").value.trim();
+  const st = document.getElementById("keyStatus");
+  try{
+    if(v) localStorage.setItem("jf-apikey", v); else localStorage.removeItem("jf-apikey");
+    st.textContent = v ? "✅ 저장되었습니다. 이제 본인 예산으로 검색합니다." : "키를 지웠습니다. 공용 무료 예산을 사용합니다.";
+    st.style.color = "var(--good)";
+  }catch(e){ st.textContent = "⚠️ 브라우저 저장소를 사용할 수 없습니다."; st.style.color = "var(--gold)"; }
+});
+
 document.getElementById("themeBtn").addEventListener("click", () => {
   applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
 });
