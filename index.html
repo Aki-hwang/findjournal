@@ -78,6 +78,23 @@
   .sw input:checked::after{transform:translateX(16px)}
   .sw .q{color:var(--faint);font-weight:400;cursor:help}
 
+  /* JCR upload box */
+  .jcrbox{margin-top:18px;padding:14px 16px;border:1.5px dashed var(--border2);border-radius:12px;background:var(--bg)}
+  .jcrhead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:.85rem}
+  .jcrhead .tag{background:var(--bg2);color:var(--faint);border-radius:6px;padding:2px 7px;font-size:.68rem;font-weight:700;margin-left:3px}
+  .filebtn{background:var(--card);border:1px solid var(--border2);border-radius:9px;padding:7px 13px;font-size:.78rem;font-weight:700;cursor:pointer;color:var(--sub);transition:.15s}
+  .filebtn:hover{border-color:var(--accent);color:var(--accent)}
+  .filebtn input{display:none}
+  .jcrdesc{font-size:.75rem;color:var(--faint);margin-top:9px;line-height:1.65}
+  .jcrdesc a{color:var(--accent)}
+  .jcrstatus{font-size:.76rem;margin-top:7px;font-weight:700}
+  .chip.q1{background:var(--good-soft);border-color:transparent;color:var(--good)}
+  .chip.q2{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+  .chip.jcr{background:var(--gold-soft);border-color:transparent;color:var(--gold)}
+  .chip.jcr b{color:var(--gold)}
+  .fieldline{font-size:.77rem;color:var(--faint);margin:-6px 0 14px}
+  .fieldline b{color:var(--sub)}
+
   button.go{
     margin-top:22px;width:100%;padding:15px;border:none;border-radius:12px;font-size:1.02rem;font-weight:800;
     color:#fff;cursor:pointer;background:linear-gradient(100deg,var(--accent),var(--accent2));
@@ -259,6 +276,19 @@
       <label class="sw"><input type="checkbox" id="coreonly" checked> 핵심 색인 저널만 <span class="q" title="OpenAlex의 core 지정 — Scopus·DOAJ 등 주요 색인에 등재된 저널. 학회 초록집 등 비정상 항목을 걸러냅니다.">ⓘ</span></label>
     </div>
 
+    <div class="jcrbox">
+      <div class="jcrhead">
+        <span>📎 <b>내 JCR 데이터 불러오기</b> <span class="tag">선택</span></span>
+        <label class="filebtn">CSV 선택<input type="file" id="jcrFile" accept=".csv,text/csv"></label>
+      </div>
+      <p class="jcrdesc">
+        JCR 공식 IF·백분위는 Clarivate 라이선스 데이터라 이 사이트에 포함할 수 없습니다.
+        학교 계정으로 <a href="https://jcr.clarivate.com" target="_blank" rel="noopener">JCR</a>에서 저널 목록을 CSV로 내보낸 뒤 여기서 불러오면,
+        ISSN으로 자동 매칭해 함께 표시합니다. <b>파일은 브라우저 안에서만 처리되며 어디로도 전송되지 않습니다.</b>
+      </p>
+      <p class="jcrstatus" id="jcrStatus"></p>
+    </div>
+
     <button class="go" id="goBtn">🔍 저널 추천받기</button>
     <p class="hint">입력한 내용은 서버에 저장되지 않고, 브라우저에서 OpenAlex로 직접 조회합니다 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd></p>
 
@@ -287,9 +317,10 @@
     제목·초록에서 핵심 키워드를 추출해 유사 논문을 찾고, 그 논문들의 게재 저널을 <b>적합도(관련성 × 게재 빈도 × 최신성)</b>로 집계합니다.<br>
     데이터: <a href="https://openalex.org" target="_blank" rel="noopener">OpenAlex</a> · 오픈 라이선스(CC0)
     <p class="disc">
-      ※ <b>2yr citedness</b>는 최근 2년 평균 피인용 수로, 임팩트팩터(IF)와 유사하지만 동일한 지표는 아닙니다.
-      APC·오픈액세스 정보는 OpenAlex 기준이며 실제와 다를 수 있으니 투고 전 저널 공식 홈페이지에서 반드시 확인하세요.
-      본 도구는 게재 승인을 보장하지 않습니다.
+      ※ <b>IF(2yr)</b>는 최근 2년 평균 피인용 수로, 임팩트팩터와 같은 방식으로 계산했지만 Clarivate의 공식 JIF와는 값이 다릅니다.
+      <b>분야 상위 %·Q1~Q4</b>는 이 논문 주제 분야의 핵심 저널을 대상으로 계산한 OpenAlex 기준 백분위이며, <b>공식 JCR 사분위가 아닙니다.</b>
+      공식 JCR 지표가 필요하면 위의 CSV 불러오기를 이용하세요 — 해당 데이터는 이 브라우저를 벗어나지 않습니다.
+      APC·오픈액세스 정보는 실제와 다를 수 있으니 투고 전 저널 공식 홈페이지에서 반드시 확인하세요. 본 도구는 게재 승인을 보장하지 않습니다.
     </p>
   </footer>
 </div>
@@ -302,6 +333,7 @@ const MAILTO = "mailto=journalfinder@github.io"; // OpenAlex polite pool
 let JOURNALS = [];      // enriched + filtered journals currently displayed
 let CUR_KEYWORDS = [];  // editable keyword state
 let LAST_WORKS = 0;
+let PEER_INFO = null;   // {topic, total} for field-relative percentile
 
 /* ── Examples ───────────────────────────── */
 const EXAMPLES = {
@@ -367,7 +399,7 @@ async function searchWorks(keywords, yrs){
     const from = new Date(); from.setFullYear(from.getFullYear() - yrs);
     filter += ",from_publication_date:" + from.toISOString().slice(0,10);
   }
-  const sel = "select=display_name,relevance_score,publication_year,cited_by_count,doi,primary_location";
+  const sel = "select=display_name,relevance_score,publication_year,cited_by_count,doi,primary_location,primary_topic";
   const pool = new Map();
   let used = [];
 
@@ -412,6 +444,55 @@ function aggregate(works, coreOnly){
     if(agg[id].papers.length < 3) agg[id].papers.push(w);
   }
   return Object.keys(agg).map(k => agg[k]).sort((a,b) => b.score - a.score).slice(0, 40);
+}
+
+/* ── Field-relative percentile (NOT Clarivate JCR) ──────────────
+   Peer set = core, ISSN-bearing journals sharing the paper's dominant
+   OpenAlex topic. percentile = share of peers this journal outranks
+   by 2-year mean citedness. Quartile follows from the percentile.     */
+function dominantTopic(works){
+  const c = Object.create(null);
+  for(const w of works){
+    const t = w.primary_topic;
+    if(!t || !t.id) continue;
+    const id = t.id.split("/").pop();
+    if(!c[id]) c[id] = { id:id, n:0, name:t.display_name,
+                         field:(t.field && t.field.display_name) || "" };
+    c[id].n++;
+  }
+  const arr = Object.keys(c).map(k => c[k]).sort((a,b) => b.n - a.n);
+  return arr.length ? arr[0] : null;
+}
+
+async function countSources(filter){
+  try{
+    const r = await fetch(API + "/sources?filter=" + filter + "&per-page=1&select=id&" + MAILTO).then(r => r.json());
+    return (r.meta && typeof r.meta.count === "number") ? r.meta.count : null;
+  }catch(e){ return null; }
+}
+
+const quartileOf = p => p >= 75 ? "Q1" : p >= 50 ? "Q2" : p >= 25 ? "Q3" : "Q4";
+
+async function addPercentiles(list, topic){
+  if(!topic) return list;
+  const base = "topics.id:" + topic.id + ",is_core:true,has_issn:true";
+  const total = await countSources(base);
+  if(!total || total < 20) return list;   // peer set too small to be meaningful
+
+  PEER_INFO = { topic:topic, total:total };
+
+  // one count query per journal, run in small batches
+  for(let i = 0; i < list.length; i += 5){
+    const batch = list.slice(i, i + 5);
+    await Promise.all(batch.map(async j => {
+      if(j.if2 == null) return;
+      const better = await countSources(base + ",summary_stats.2yr_mean_citedness:>" + j.if2);
+      if(better == null) return;
+      j.pct = Math.max(1, Math.min(100, Math.round(100 * (1 - better / total))));
+      j.q   = quartileOf(j.pct);
+    }));
+  }
+  return list;
 }
 
 async function enrich(list){
@@ -489,6 +570,14 @@ async function run(keywordsOverride){
 
     list = await enrich(list);
 
+    PEER_INFO = null;
+    const topic = dominantTopic(works);
+    if(topic){
+      setStatus("분야 내 순위(백분위) 계산 중… — " + esc(topic.name), true);
+      list = await addPercentiles(list, topic);
+    }
+    applyJCR(list);
+
     // post-filters
     if(document.getElementById("oaonly").checked) list = list.filter(j => j.oa);
     const apcMax = parseInt(document.getElementById("apcmax").value, 10);
@@ -547,9 +636,11 @@ function renderKeywords(){
 /* ── Render results ─────────────────────── */
 function sortList(mode){
   const l = JOURNALS.slice();
-  if(mode === "if")  return l.sort((a,b) => (b.if2||0) - (a.if2||0));
-  if(mode === "h")   return l.sort((a,b) => (b.h||0) - (a.h||0));
-  if(mode === "apc") return l.sort((a,b) => (a.apc==null?1e9:a.apc) - (b.apc==null?1e9:b.apc));
+  if(mode === "if")   return l.sort((a,b) => (b.if2||0) - (a.if2||0));
+  if(mode === "h")    return l.sort((a,b) => (b.h||0) - (a.h||0));
+  if(mode === "pct")  return l.sort((a,b) => (b.pct||0) - (a.pct||0));
+  if(mode === "jcr")  return l.sort((a,b) => (b.jcrIF||0) - (a.jcrIF||0));
+  if(mode === "apc")  return l.sort((a,b) => (a.apc==null?1e9:a.apc) - (b.apc==null?1e9:b.apc));
   return l.sort((a,b) => b.score - a.score);
 }
 
@@ -564,11 +655,18 @@ function render(){
       '<h2>추천 저널 <span>' + list.length + '곳 · 유사 논문 ' + LAST_WORKS + '편 기준</span></h2>' +
       '<div class="tools">' +
         '<select id="sortSel" aria-label="정렬 기준">' +
-          opt("match","적합도순") + opt("if","인용도(IF유사)순") + opt("h","h-index순") + opt("apc","게재료 낮은순") +
+          opt("match","적합도순") + opt("if","IF(2yr)순") + opt("pct","분야 백분위순") +
+          (JCR ? opt("jcr","JCR IF순") : "") + opt("h","h-index순") + opt("apc","게재료 낮은순") +
         '</select>' +
         '<button class="csv" id="csvBtn">⬇ CSV 내보내기</button>' +
       '</div>' +
     '</div>';
+
+  if(PEER_INFO){
+    html += '<div class="fieldline">📐 백분위 기준 분야: <b>' + esc(PEER_INFO.topic.name) + '</b>' +
+            (PEER_INFO.topic.field ? ' (' + esc(PEER_INFO.topic.field) + ')' : '') +
+            ' · 동일 분야 핵심 저널 <b>' + PEER_INFO.total.toLocaleString() + '개</b> 대비 · OpenAlex 기준(JCR 아님)</div>';
+  }
 
   list.forEach((j, i) => {
     const papers = j.papers.map(p =>
@@ -595,7 +693,12 @@ function render(){
         '<div class="matchlabel">이 저널에 유사 논문 <b>' + j.count + "편</b> 게재</div>" +
 
         '<div class="chips">' +
-          (j.if2 != null ? '<span class="chip">2yr citedness <b>' + j.if2.toFixed(1) + "</b></span>" : "") +
+          (j.if2 != null ? '<span class="chip" title="최근 2년 평균 피인용 수 — 임팩트팩터와 같은 방식으로 계산한 OpenAlex 지표(공식 JIF 아님)">IF(2yr) <b>' + j.if2.toFixed(2) + "</b></span>" : "") +
+          (j.pct != null
+              ? '<span class="chip ' + (j.q === "Q1" ? "q1" : j.q === "Q2" ? "q2" : "") + '" title="이 논문 주제 분야의 핵심 저널 대비 인용도 백분위 (OpenAlex 기준, JCR 아님)">분야 상위 <b>' + Math.max(1, 100 - j.pct) + "%</b> · " + j.q + "</span>"
+              : "") +
+          (j.jcrIF != null ? '<span class="chip jcr" title="내가 불러온 JCR 파일의 값">JCR IF <b>' + j.jcrIF.toFixed(3) + "</b></span>" : "") +
+          (j.jcrPct != null ? '<span class="chip jcr">JCR 백분위 <b>' + j.jcrPct.toFixed(1) + "%</b>" + (j.jcrQ ? " · " + esc(j.jcrQ) : "") + "</span>" : "") +
           (j.h != null ? '<span class="chip">h-index <b>' + j.h + "</b></span>" : "") +
           (j.oa ? '<span class="chip oa"><b>Open Access</b>' + (j.doaj ? " · DOAJ" : "") + "</span>"
                 : '<span class="chip">구독형</span>') +
@@ -624,11 +727,14 @@ function render(){
 
 /* ── CSV ────────────────────────────────── */
 function exportCSV(list){
-  const head = ["순위","저널명","발행처","ISSN","적합도(%)","유사논문수","2yr_citedness","h_index","오픈액세스","DOAJ","핵심색인","APC_USD","홈페이지"];
+  const head = ["순위","저널명","발행처","ISSN","적합도(%)","유사논문수","IF_2yr_OpenAlex","분야백분위","분야사분위","JCR_IF","JCR_백분위","JCR_사분위","h_index","오픈액세스","DOAJ","핵심색인","APC_USD","홈페이지"];
   const q = v => '"' + String(v==null?"":v).replace(/"/g,'""') + '"';
   const rows = list.map((j,i) => [
     i+1, j.name, j.publisher, j.issn, j.match, j.count,
-    j.if2!=null?j.if2.toFixed(2):"", j.h!=null?j.h:"",
+    j.if2!=null?j.if2.toFixed(2):"",
+    j.pct!=null?j.pct:"", j.q||"",
+    j.jcrIF!=null?j.jcrIF:"", j.jcrPct!=null?j.jcrPct:"", j.jcrQ||"",
+    j.h!=null?j.h:"",
     j.oa?"Y":"N", j.doaj?"Y":"N", j.core?"Y":"N",
     j.apc!=null?j.apc:"", j.home
   ].map(q).join(","));
@@ -639,6 +745,91 @@ function exportCSV(list){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+/* ── Optional: your own JCR export (stays in this browser) ──────
+   Clarivate JCR data is licensed and cannot be redistributed, so this
+   site ships none. If you have institutional access you can export the
+   journal list as CSV and load it here — parsed locally, never uploaded. */
+let JCR = null; // { issn -> {jif, pct, quartile, category} }
+
+function parseCSVLine(line){
+  const out = []; let cur = "", inQ = false;
+  for(let i=0;i<line.length;i++){
+    const ch = line[i];
+    if(ch === '"'){ if(inQ && line[i+1] === '"'){ cur += '"'; i++; } else inQ = !inQ; }
+    else if(ch === "," && !inQ){ out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur); return out;
+}
+const normIssn = s => String(s||"").trim().toUpperCase().replace(/[^0-9X]/g,"");
+
+function loadJCRCsv(text){
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  // find the header row (JCR exports have preamble lines)
+  let hi = lines.findIndex(l => /issn/i.test(l) && /(impact factor|jif|jci)/i.test(l));
+  if(hi === -1) hi = lines.findIndex(l => /issn/i.test(l));
+  if(hi === -1) throw new Error("ISSN 열을 찾지 못했습니다.");
+
+  const head = parseCSVLine(lines[hi]).map(h => h.trim().toLowerCase());
+  const find = re => head.findIndex(h => re.test(h));
+  const iIssn = find(/^issn$/), iEIssn = find(/eissn|e-issn/);
+  const iJif  = find(/2022 jif|2023 jif|2024 jif|^jif$|impact factor/);
+  const iPct  = find(/jif percentile|percentile/);
+  const iQ    = find(/quartile/);
+  const iCat  = find(/category/);
+
+  const map = Object.create(null);
+  for(let i = hi + 1; i < lines.length; i++){
+    const c = parseCSVLine(lines[i]);
+    if(c.length < 2) continue;
+    const rec = {
+      jif: iJif > -1 ? parseFloat(String(c[iJif]).replace(/[^\d.]/g,"")) : NaN,
+      pct: iPct > -1 ? parseFloat(String(c[iPct]).replace(/[^\d.]/g,"")) : NaN,
+      quartile: iQ > -1 ? String(c[iQ]).trim() : "",
+      category: iCat > -1 ? String(c[iCat]).trim() : ""
+    };
+    [iIssn, iEIssn].forEach(idx => {
+      if(idx > -1 && c[idx]){ const k = normIssn(c[idx]); if(k.length >= 8) map[k] = rec; }
+    });
+  }
+  const n = Object.keys(map).length;
+  if(!n) throw new Error("유효한 행이 없습니다.");
+  JCR = map;
+  return n;
+}
+
+function applyJCR(list){
+  if(!JCR) return list;
+  for(const j of list){
+    const rec = JCR[normIssn(j.issn)];
+    if(!rec) continue;
+    if(!isNaN(rec.jif)) j.jcrIF = rec.jif;
+    if(!isNaN(rec.pct)) j.jcrPct = rec.pct;
+    if(rec.quartile) j.jcrQ = rec.quartile;
+    if(rec.category) j.jcrCat = rec.category;
+  }
+  return list;
+}
+
+document.getElementById("jcrFile").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    const st = document.getElementById("jcrStatus");
+    try{
+      const n = loadJCRCsv(String(rd.result));
+      st.textContent = "✅ JCR 데이터 " + n.toLocaleString() + "개 저널 로드됨 (이 브라우저에만 저장)";
+      st.style.color = "var(--good)";
+      if(JOURNALS.length){ applyJCR(JOURNALS); render(); }
+    }catch(err){
+      st.textContent = "⚠️ 읽기 실패: " + err.message;
+      st.style.color = "var(--gold)";
+    }
+  };
+  rd.readAsText(f, "utf-8");
+});
 
 /* ── Theme ──────────────────────────────── */
 function applyTheme(t){
