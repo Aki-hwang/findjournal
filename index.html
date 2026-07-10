@@ -4,78 +4,229 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Journal Finder — 내 논문에 맞는 저널 찾기</title>
+<meta name="description" content="논문 제목과 초록을 넣으면 유사 논문이 실제로 게재된 저널을 찾아 추천합니다. OpenAlex 기반, 전 분야 지원.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>">
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet">
 <style>
   :root{
-    --bg:#0f1117; --card:#1a1d27; --border:#2a2f3e;
-    --text:#e8eaf0; --sub:#9aa1b5; --accent:#6c8cff; --accent2:#8f6cff;
-    --good:#4ade80; --chip:#252a3a;
+    --bg:#f7f8fc; --bg2:#eef1f8; --card:#ffffff; --border:#e2e6f0; --border2:#d3d9e8;
+    --text:#131722; --sub:#5d6684; --faint:#8b93ab;
+    --accent:#4f5bd5; --accent2:#8b5cf6; --accent-soft:#eef0fe;
+    --good:#0f9d58; --good-soft:#e6f5ec; --gold:#b7791f; --gold-soft:#fdf6e3;
+    --shadow:0 1px 2px rgba(19,23,34,.04), 0 8px 24px rgba(19,23,34,.06);
+    --shadow-lg:0 4px 12px rgba(19,23,34,.08), 0 24px 48px rgba(19,23,34,.10);
+    --radius:16px;
+  }
+  html[data-theme="dark"]{
+    --bg:#0d0f16; --bg2:#141826; --card:#161a26; --border:#262c3d; --border2:#333a50;
+    --text:#e9ecf5; --sub:#9aa3bd; --faint:#6b7391;
+    --accent:#7c8aff; --accent2:#a78bfa; --accent-soft:#1d2138;
+    --good:#4ade80; --good-soft:#132a1e; --gold:#fbbf24; --gold-soft:#2a2314;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lg:0 4px 12px rgba(0,0,0,.4), 0 24px 48px rgba(0,0,0,.5);
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text);font-family:'Pretendard','Segoe UI','Apple SD Gothic Neo',sans-serif;line-height:1.55}
-  .wrap{max-width:980px;margin:0 auto;padding:36px 20px 80px}
-  header{text-align:center;margin-bottom:28px}
-  header h1{font-size:1.9rem;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
-  header p{color:var(--sub);margin-top:6px;font-size:.95rem}
-  .panel{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px}
-  label{display:block;font-size:.85rem;color:var(--sub);margin:14px 0 6px;font-weight:600}
-  input[type=text],textarea,select{width:100%;background:#12141d;border:1px solid var(--border);border-radius:9px;color:var(--text);padding:11px 13px;font-size:.95rem;font-family:inherit}
-  textarea{min-height:130px;resize:vertical}
-  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
-  .opts{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;align-items:end}
-  .opts>div{flex:1;min-width:150px}
-  .checkline{display:flex;align-items:center;gap:8px;padding-bottom:10px;font-size:.88rem;color:var(--sub);min-width:170px}
-  .checkline input{width:auto}
-  button.go{margin-top:20px;width:100%;padding:14px;border:none;border-radius:10px;font-size:1.05rem;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:opacity .2s}
-  button.go:hover{opacity:.9}
-  button.go:disabled{opacity:.45;cursor:wait}
-  #status{text-align:center;color:var(--sub);margin:22px 0 6px;font-size:.92rem;min-height:1.4em}
-  #kwbox{text-align:center;font-size:.82rem;color:var(--sub);margin-bottom:8px}
-  #kwbox .chip{display:inline-block;margin:3px 2px}
+  body{
+    background:var(--bg); color:var(--text); line-height:1.6;
+    font-family:'Pretendard','Inter',-apple-system,'Segoe UI','Apple SD Gothic Neo',sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(1200px 500px at 50% -180px, var(--accent-soft), transparent 70%);
+    background-repeat:no-repeat;
+    transition:background-color .2s, color .2s;
+  }
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px 96px}
+
+  /* ── Top bar ─────────────────────────── */
+  .topbar{display:flex;justify-content:space-between;align-items:center;padding:20px 0 0}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;font-size:.98rem;letter-spacing:-.01em}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 0 4px var(--accent-soft)}
+  .iconbtn{background:var(--card);border:1px solid var(--border);color:var(--sub);width:38px;height:38px;border-radius:11px;cursor:pointer;font-size:.95rem;display:grid;place-items:center;transition:.15s}
+  .iconbtn:hover{border-color:var(--accent);color:var(--accent);transform:translateY(-1px)}
+
+  /* ── Hero ────────────────────────────── */
+  header{text-align:center;padding:44px 0 30px}
+  h1{font-size:clamp(1.85rem,4.2vw,2.7rem);font-weight:800;letter-spacing:-.035em;line-height:1.18}
+  h1 .grad{background:linear-gradient(100deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  header p{color:var(--sub);margin-top:13px;font-size:1.02rem;max-width:610px;margin-inline:auto}
+  .trust{display:flex;justify-content:center;gap:7px;margin-top:18px;flex-wrap:wrap}
+  .pill{background:var(--card);border:1px solid var(--border);color:var(--sub);border-radius:999px;padding:5px 13px;font-size:.775rem;font-weight:600}
+
+  /* ── Panel ───────────────────────────── */
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:26px;box-shadow:var(--shadow)}
+  .flabel{display:flex;justify-content:space-between;align-items:baseline;font-size:.82rem;color:var(--sub);margin:0 0 7px;font-weight:700}
+  .flabel .opt{font-weight:500;color:var(--faint);font-size:.75rem}
+  .field + .field{margin-top:18px}
+  input[type=text],textarea,select{
+    width:100%;background:var(--bg);border:1.5px solid var(--border);border-radius:11px;color:var(--text);
+    padding:12px 14px;font-size:.94rem;font-family:inherit;transition:.15s;line-height:1.6;
+  }
+  textarea{min-height:132px;resize:vertical}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);background:var(--card)}
+  ::placeholder{color:var(--faint)}
+
+  .examples{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px;align-items:center}
+  .examples .lbl{font-size:.75rem;color:var(--faint);font-weight:600;margin-right:2px}
+  .ex{background:var(--bg2);border:1px solid var(--border);color:var(--sub);border-radius:8px;padding:5px 11px;font-size:.775rem;cursor:pointer;font-family:inherit;transition:.15s;font-weight:600}
+  .ex:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+
+  .opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-top:20px}
+  .switches{display:flex;flex-wrap:wrap;gap:18px;margin-top:18px;padding-top:17px;border-top:1px dashed var(--border)}
+  .sw{display:flex;align-items:center;gap:9px;font-size:.85rem;color:var(--sub);cursor:pointer;font-weight:600}
+  .sw input{appearance:none;width:38px;height:22px;border-radius:999px;background:var(--border2);position:relative;cursor:pointer;transition:.2s;flex:none}
+  .sw input::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .sw input:checked{background:var(--accent)}
+  .sw input:checked::after{transform:translateX(16px)}
+  .sw .q{color:var(--faint);font-weight:400;cursor:help}
+
+  button.go{
+    margin-top:22px;width:100%;padding:15px;border:none;border-radius:12px;font-size:1.02rem;font-weight:800;
+    color:#fff;cursor:pointer;background:linear-gradient(100deg,var(--accent),var(--accent2));
+    font-family:inherit;letter-spacing:-.01em;transition:.18s;box-shadow:0 6px 18px -6px var(--accent);
+  }
+  button.go:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 12px 26px -8px var(--accent)}
+  button.go:disabled{opacity:.55;cursor:wait;transform:none}
+  .hint{font-size:.76rem;color:var(--faint);margin-top:11px;text-align:center}
+
+  /* ── Notices ─────────────────────────── */
+  .notice{display:none;margin-top:16px;padding:13px 15px;border-radius:11px;font-size:.85rem;line-height:1.55;border:1px solid}
+  .notice.show{display:block}
+  .notice.warn{background:var(--gold-soft);border-color:var(--gold);color:var(--gold)}
+  .notice b{font-weight:800}
+
+  /* ── Status & keywords ───────────────── */
+  #status{text-align:center;color:var(--sub);margin:26px 0 4px;font-size:.9rem;min-height:1.4em;font-weight:600}
   .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:8px}
   @keyframes spin{to{transform:rotate(360deg)}}
-  .sortbar{display:flex;justify-content:space-between;align-items:center;margin:26px 0 14px;flex-wrap:wrap;gap:10px}
-  .sortbar h2{font-size:1.15rem}
-  .sortbar select{width:auto;padding:7px 10px;font-size:.85rem}
-  .jcard{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px;position:relative;transition:border-color .2s}
-  .jcard:hover{border-color:var(--accent)}
-  .rank{position:absolute;top:20px;right:20px;font-size:1.5rem;font-weight:800;color:#333a4e}
-  .jname{font-size:1.12rem;font-weight:700;padding-right:60px}
+
+  .kwpanel{display:none;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:17px 19px;margin-top:14px;box-shadow:var(--shadow)}
+  .kwpanel.show{display:block}
+  .kwhead{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:11px}
+  .kwhead h3{font-size:.87rem;font-weight:800}
+  .kwhead p{font-size:.76rem;color:var(--faint);font-weight:500;margin-top:1px}
+  .kwlist{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+  .kw{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);color:var(--accent);border:1px solid transparent;border-radius:8px;padding:5px 8px 5px 11px;font-size:.8rem;font-weight:700}
+  .kw button{background:none;border:none;color:inherit;cursor:pointer;opacity:.55;font-size:1rem;line-height:1;padding:0 1px;font-family:inherit}
+  .kw button:hover{opacity:1}
+  .kwadd{background:var(--bg);border:1.5px dashed var(--border2);border-radius:8px;padding:5px 10px;font-size:.8rem;color:var(--text);width:130px;font-family:inherit}
+  .kwadd:focus{outline:none;border-color:var(--accent)}
+  .rerun{background:var(--text);color:var(--card);border:none;border-radius:9px;padding:8px 14px;font-size:.79rem;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s;white-space:nowrap}
+  .rerun:hover{opacity:.85}
+
+  /* ── Toolbar ─────────────────────────── */
+  .toolbar{display:flex;justify-content:space-between;align-items:center;margin:30px 0 15px;flex-wrap:wrap;gap:12px}
+  .toolbar h2{font-size:1.22rem;font-weight:800;letter-spacing:-.02em}
+  .toolbar h2 span{color:var(--faint);font-weight:600;font-size:.88rem;margin-left:5px}
+  .tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .tools select{width:auto;padding:8px 11px;font-size:.8rem;font-weight:600;border-radius:9px}
+  .csv{background:var(--card);border:1px solid var(--border);color:var(--sub);border-radius:9px;padding:8px 13px;font-size:.8rem;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s}
+  .csv:hover{border-color:var(--accent);color:var(--accent)}
+
+  /* ── Journal cards ───────────────────── */
+  .jcard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px 24px;margin-bottom:13px;position:relative;transition:.18s;box-shadow:var(--shadow)}
+  .jcard:hover{border-color:var(--accent);box-shadow:var(--shadow-lg);transform:translateY(-2px)}
+  .jtop{display:flex;gap:15px;align-items:flex-start}
+  .rank{
+    flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;
+    font-size:.95rem;font-weight:800;background:var(--bg2);color:var(--faint);border:1px solid var(--border);
+  }
+  .jcard:nth-child(1) .rank, .rank.top{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border-color:transparent}
+  .jmeta{flex:1;min-width:0}
+  .jname{font-size:1.09rem;font-weight:800;letter-spacing:-.015em;line-height:1.35}
   .jname a{color:var(--text);text-decoration:none}
-  .jname a:hover{color:var(--accent)}
-  .pub{color:var(--sub);font-size:.83rem;margin-top:2px}
-  .matchbar{height:7px;background:#12141d;border-radius:4px;margin:12px 0 4px;overflow:hidden}
-  .matchbar>div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:4px}
-  .matchlabel{font-size:.78rem;color:var(--sub);margin-bottom:10px}
-  .chips{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0}
-  .chip{background:var(--chip);border-radius:7px;padding:4px 10px;font-size:.79rem;color:var(--sub)}
-  .chip b{color:var(--text);font-weight:600}
+  .jname a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+  .pub{color:var(--faint);font-size:.79rem;margin-top:3px}
+
+  .matchwrap{display:flex;align-items:center;gap:11px;margin:14px 0 3px}
+  .matchbar{flex:1;height:8px;background:var(--bg2);border-radius:5px;overflow:hidden}
+  .matchbar>div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:5px;transition:width .6s cubic-bezier(.2,.8,.2,1)}
+  .matchpct{font-size:.83rem;font-weight:800;color:var(--accent);min-width:42px;text-align:right}
+  .matchlabel{font-size:.77rem;color:var(--faint);margin-bottom:12px}
+
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+  .chip{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:.765rem;color:var(--sub);font-weight:600}
+  .chip b{color:var(--text);font-weight:800}
+  .chip.oa{background:var(--good-soft);border-color:transparent;color:var(--good)}
   .chip.oa b{color:var(--good)}
-  details{margin-top:10px}
-  summary{cursor:pointer;font-size:.84rem;color:var(--accent)}
-  .paper{margin:9px 0 0 4px;padding-left:12px;border-left:2px solid var(--border);font-size:.85rem}
-  .paper a{color:var(--text);text-decoration:none}
+  .chip.core{background:var(--gold-soft);border-color:transparent;color:var(--gold)}
+
+  details{margin-top:14px;border-top:1px dashed var(--border);padding-top:11px}
+  summary{cursor:pointer;font-size:.8rem;color:var(--accent);font-weight:700;list-style:none;display:flex;align-items:center;gap:6px}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸";transition:.2s;display:inline-block;font-size:.7rem}
+  details[open] summary::before{transform:rotate(90deg)}
+  .paper{margin:11px 0 0;padding-left:13px;border-left:2px solid var(--border2);font-size:.845rem}
+  .paper a{color:var(--text);text-decoration:none;line-height:1.45;display:block}
   .paper a:hover{color:var(--accent)}
-  .paper .meta{color:var(--sub);font-size:.78rem}
-  footer{text-align:center;color:#555c72;font-size:.78rem;margin-top:44px}
-  footer a{color:#6c7590}
-  .hint{font-size:.78rem;color:#555c72;margin-top:5px}
+  .paper .meta{color:var(--faint);font-size:.755rem;margin-top:2px}
+  .links{display:flex;gap:14px;margin-top:13px;flex-wrap:wrap}
+  .links a{font-size:.77rem;color:var(--sub);text-decoration:none;font-weight:700}
+  .links a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+
+  /* ── Skeleton ────────────────────────── */
+  .skel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px 24px;margin-bottom:13px}
+  .sk{background:linear-gradient(90deg,var(--bg2) 25%,var(--border) 50%,var(--bg2) 75%);background-size:200% 100%;animation:sh 1.3s infinite;border-radius:6px}
+  @keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+  /* ── Empty ───────────────────────────── */
+  .empty{text-align:center;padding:52px 20px;color:var(--faint)}
+  .empty .big{font-size:2.6rem;margin-bottom:10px}
+  .empty h3{color:var(--text);font-size:1.02rem;margin-bottom:7px;font-weight:800}
+  .empty p{font-size:.87rem;max-width:400px;margin-inline:auto;line-height:1.65}
+
+  footer{text-align:center;color:var(--faint);font-size:.775rem;margin-top:52px;line-height:1.8}
+  footer a{color:var(--sub);font-weight:600}
+  .disc{max-width:660px;margin:14px auto 0;font-size:.735rem;color:var(--faint);opacity:.85;line-height:1.7}
+
+  @media(max-width:640px){
+    .panel{padding:20px}
+    .jcard{padding:18px}
+    .jtop{gap:11px}
+    .rank{width:34px;height:34px;font-size:.82rem;border-radius:10px}
+    header{padding:32px 0 24px}
+    .toolbar{align-items:flex-start;flex-direction:column}
+  }
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> Journal Finder</div>
+    <button class="iconbtn" id="themeBtn" title="테마 전환" aria-label="테마 전환">🌙</button>
+  </div>
+
   <header>
-    <h1>📡 Journal Finder</h1>
-    <p>논문 제목·초록을 넣으면, 유사한 논문들이 실제로 실린 저널을 찾아 추천합니다 · 전 분야 지원</p>
+    <h1>내 논문에 맞는 <span class="grad">저널을 찾아드립니다</span></h1>
+    <p>제목과 초록을 넣으면, 유사한 논문들이 <b>실제로 게재된</b> 저널을 분석해 추천합니다.</p>
+    <div class="trust">
+      <span class="pill">📚 OpenAlex 2.5억+ 논문</span>
+      <span class="pill">🌍 전 분야 지원</span>
+      <span class="pill">🔒 서버 전송 없음</span>
+      <span class="pill">💸 무료</span>
+    </div>
   </header>
 
   <div class="panel">
-    <label for="title">논문 제목 (선택)</label>
-    <input type="text" id="title" placeholder="예: Antifouling all-polymeric microneedle array for long-term wearable ECG monitoring">
-    <label for="abs">초록 / 핵심 내용 (권장 · 영어로 입력하면 정확도가 높습니다)</label>
-    <textarea id="abs" placeholder="초록을 붙여넣거나, 연구 주제·방법·결과를 2~3문장으로 적어주세요."></textarea>
+    <div class="field">
+      <div class="flabel"><label for="title">논문 제목</label><span class="opt">선택</span></div>
+      <input type="text" id="title" placeholder="Antifouling all-polymeric microneedle array for wearable ECG monitoring">
+    </div>
+
+    <div class="field">
+      <div class="flabel"><label for="abs">초록 또는 핵심 내용</label><span class="opt">영어 권장 · 정확도 ↑</span></div>
+      <textarea id="abs" placeholder="초록을 붙여넣거나, 연구 주제·방법·결과를 2~3문장으로 적어주세요."></textarea>
+      <div class="examples">
+        <span class="lbl">예시:</span>
+        <button class="ex" data-ex="bio">바이오센서</button>
+        <button class="ex" data-ex="onc">종양학</button>
+        <button class="ex" data-ex="ai">AI/ML</button>
+        <button class="ex" data-ex="mkt">마케팅</button>
+      </div>
+    </div>
+
     <div class="opts">
       <div>
-        <label>검색 기간</label>
+        <div class="flabel"><label for="years">검색 기간</label></div>
         <select id="years">
           <option value="3">최근 3년</option>
           <option value="5" selected>최근 5년</option>
@@ -84,205 +235,450 @@
         </select>
       </div>
       <div>
-        <label>추천 저널 수</label>
+        <div class="flabel"><label for="topn">추천 저널 수</label></div>
         <select id="topn">
           <option value="10">10개</option>
           <option value="15" selected>15개</option>
           <option value="25">25개</option>
         </select>
       </div>
-      <div class="checkline"><input type="checkbox" id="oaonly"><label for="oaonly" style="margin:0">오픈액세스 저널만</label></div>
+      <div>
+        <div class="flabel"><label for="apcmax">게재료(APC) 상한</label></div>
+        <select id="apcmax">
+          <option value="0" selected>제한 없음</option>
+          <option value="1">무료(APC 0)만</option>
+          <option value="1000">$1,000 이하</option>
+          <option value="2000">$2,000 이하</option>
+          <option value="3000">$3,000 이하</option>
+        </select>
+      </div>
     </div>
+
+    <div class="switches">
+      <label class="sw"><input type="checkbox" id="oaonly"> 오픈액세스만</label>
+      <label class="sw"><input type="checkbox" id="coreonly" checked> 핵심 색인 저널만 <span class="q" title="OpenAlex의 core 지정 — Scopus·DOAJ 등 주요 색인에 등재된 저널. 학회 초록집 등 비정상 항목을 걸러냅니다.">ⓘ</span></label>
+    </div>
+
     <button class="go" id="goBtn">🔍 저널 추천받기</button>
-    <p class="hint">데이터: OpenAlex (무료 공개 학술 DB, 2.5억+ 논문) · 서버 없이 브라우저에서 직접 조회합니다</p>
+    <p class="hint">입력한 내용은 서버에 저장되지 않고, 브라우저에서 OpenAlex로 직접 조회합니다 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd></p>
+
+    <div class="notice warn" id="korNotice">
+      <b>한글이 감지되었습니다.</b> 국제 저널 DB는 영어로 색인되어 있어, 한글만으로는 결과가 거의 없습니다.
+      영문 초록이나 핵심 용어(예: <i>microneedle, biosensor</i>)를 함께 입력해 주세요.
+    </div>
   </div>
 
-  <div id="status"></div>
-  <div id="kwbox"></div>
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <div class="kwpanel" id="kwpanel">
+    <div class="kwhead">
+      <div>
+        <h3>🔑 검색에 사용된 키워드</h3>
+        <p>정확하지 않다면 지우거나 추가한 뒤 다시 검색하세요.</p>
+      </div>
+      <button class="rerun" id="rerunBtn">이 키워드로 다시 검색</button>
+    </div>
+    <div class="kwlist" id="kwlist"></div>
+  </div>
+
   <div id="results"></div>
 
-  <footer>제목·초록에서 핵심 키워드를 추출해 유사 논문을 찾고, 그 논문들의 게재 저널을 적합도(관련성×빈도×최신성)로 집계합니다.<br>
-  2yr citedness는 임팩트팩터와 유사한 지표입니다 · 데이터 출처: <a href="https://openalex.org" target="_blank">OpenAlex</a></footer>
+  <footer>
+    제목·초록에서 핵심 키워드를 추출해 유사 논문을 찾고, 그 논문들의 게재 저널을 <b>적합도(관련성 × 게재 빈도 × 최신성)</b>로 집계합니다.<br>
+    데이터: <a href="https://openalex.org" target="_blank" rel="noopener">OpenAlex</a> · 오픈 라이선스(CC0)
+    <p class="disc">
+      ※ <b>2yr citedness</b>는 최근 2년 평균 피인용 수로, 임팩트팩터(IF)와 유사하지만 동일한 지표는 아닙니다.
+      APC·오픈액세스 정보는 OpenAlex 기준이며 실제와 다를 수 있으니 투고 전 저널 공식 홈페이지에서 반드시 확인하세요.
+      본 도구는 게재 승인을 보장하지 않습니다.
+    </p>
+  </footer>
 </div>
 
 <script>
-const API = 'https://api.openalex.org';
-let JOURNALS = [];
+"use strict";
+const API = "https://api.openalex.org";
+const MAILTO = "mailto=journalfinder@github.io"; // OpenAlex polite pool
 
+let JOURNALS = [];      // enriched + filtered journals currently displayed
+let CUR_KEYWORDS = [];  // editable keyword state
+let LAST_WORKS = 0;
+
+/* ── Examples ───────────────────────────── */
+const EXAMPLES = {
+  bio: {
+    t: "Antifouling all-polymeric microneedle array for long-term wearable ECG monitoring",
+    a: "We present a structurally engineered all-polymeric microneedle sensor array for highly sensitive, real-time monitoring of biosignals in interstitial fluid. The antifouling PEDOT:PSS electrodes enable long-term wearable electrophysiological and biochemical sensing."
+  },
+  onc: {
+    t: "Immune checkpoint inhibitor resistance in metastatic melanoma",
+    a: "We investigate mechanisms of acquired resistance to PD-1 blockade in patients with metastatic melanoma and identify tumor microenvironment biomarkers predicting durable response to immunotherapy."
+  },
+  ai: {
+    t: "Efficient sparse attention for long-context transformer language models",
+    a: "We propose a sparse attention mechanism that reduces memory complexity for long-context transformer language models while preserving perplexity and downstream benchmark accuracy."
+  },
+  mkt: {
+    t: "The effect of influencer authenticity on consumer purchase intention in social media advertising",
+    a: "This study examines how perceived authenticity of social media influencers affects consumer trust and purchase intention in beauty advertising on Instagram, using structural equation modeling."
+  }
+};
+
+/* ── Keyword extraction ─────────────────── */
 const STOP = new Set(("a an the and or but of for to in on with by from as at is are was were be been being this that these those " +
 "we our us it its their they i you he she which who what when where why how all any both each few more most other some such " +
 "no nor not only own same so than too very can will just should now using used use novel present presents proposed shows show " +
-"study paper work works results result method methods approach here also into over under between during via while about based " +
-"new high highly real time first second one two three toward towards through there").split(/\s+/));
+"study studies paper work works results result method methods approach here also into over under between during via while about " +
+"based new high highly real time first second one two three toward towards through there significant significantly compared " +
+"analysis data model models effect effects role").split(/\s+/));
 
-// OpenAlex ?search= behaves like AND across terms, so feed it only the most
-// distinctive words, then back off (drop the weakest term) until the pool is big enough.
 function extractKeywords(title, abs, n){
-  const txt = (title + ' ' + title + ' ' + abs).toLowerCase();
-  const toks = txt.match(/[a-z][a-z0-9\-]{2,}/g) || [];
-  const freq = {};
+  const txt = ((title||"") + " " + (title||"") + " " + (abs||"")).toLowerCase();
+  const toks = txt.match(/[a-z][a-z0-9-]{2,}/g) || [];
+  const freq = Object.create(null);
   for(const t of toks){ if(STOP.has(t)) continue; freq[t] = (freq[t]||0) + 1; }
-  return Object.entries(freq).sort((a,b) => b[1]-a[1]).slice(0, n).map(e => e[0]);
+  return Object.keys(freq).sort((a,b) => freq[b]-freq[a]).slice(0, n);
 }
+const hasKorean = s => /[ㄱ-ㆎ가-힣]/.test(s||"");
 
-function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-
+/* ── Helpers ────────────────────────────── */
+function esc(s){
+  return String(s==null?"":s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
 function setStatus(msg, spin){
-  document.getElementById('status').innerHTML = msg ? (spin ? '<span class="spinner"></span>' : '') + msg : '';
+  document.getElementById("status").innerHTML = msg ? (spin ? '<span class="spinner"></span>' : "") + msg : "";
+}
+function showSkeletons(n){
+  let h = "";
+  for(let i=0;i<n;i++){
+    h += '<div class="skel">' +
+      '<div class="sk" style="height:18px;width:' + (44+((i*13)%30)) + '%"></div>' +
+      '<div class="sk" style="height:11px;width:30%;margin-top:9px"></div>' +
+      '<div class="sk" style="height:8px;width:100%;margin-top:17px"></div>' +
+      '<div class="sk" style="height:22px;width:62%;margin-top:15px"></div>' +
+      '</div>';
+  }
+  document.getElementById("results").innerHTML = h;
 }
 
-async function run(){
-  const title = document.getElementById('title').value.trim();
-  const abs = document.getElementById('abs').value.trim();
-  if(!title && !abs){ setStatus('⚠️ 제목이나 초록 중 하나는 입력해주세요.'); return; }
+/* ── Core search: keyword backoff ───────── */
+async function searchWorks(keywords, yrs){
+  let filter = "type:article";
+  if(yrs > 0){
+    const from = new Date(); from.setFullYear(from.getFullYear() - yrs);
+    filter += ",from_publication_date:" + from.toISOString().slice(0,10);
+  }
+  const sel = "select=display_name,relevance_score,publication_year,cited_by_count,doi,primary_location";
+  const pool = new Map();
+  let used = [];
 
-  const btn = document.getElementById('goBtn');
+  // OpenAlex ?search= behaves like AND, so start narrow and progressively drop weak terms.
+  for(let k = Math.min(6, keywords.length); k >= 2; k--){
+    const q = keywords.slice(0, k).join(" ");
+    setStatus("유사 논문 검색 중… (키워드 " + k + "개)", true);
+    const url = API + "/works?search=" + encodeURIComponent(q) + "&filter=" + filter +
+                "&sort=relevance_score:desc&per-page=100&" + sel + "&" + MAILTO;
+    let res;
+    try{ const r = await fetch(url); res = r.ok ? await r.json() : {results:[]}; }
+    catch(e){ res = {results:[]}; }
+    const got = res.results || [];
+    if(got.length && !used.length) used = keywords.slice(0, k);
+    for(const w of got) if(!pool.has(w.display_name)) pool.set(w.display_name, w);
+    if(pool.size >= 80) break;
+  }
+  if(!used.length) used = keywords.slice(0, Math.min(4, keywords.length));
+  return { works: [...pool.values()], used };
+}
+
+function aggregate(works, coreOnly){
+  const agg = Object.create(null);
+  const maxRel = Math.max.apply(null, works.map(w => w.relevance_score || 0).concat([1]));
+  const nowYr = new Date().getFullYear();
+
+  for(const w of works){
+    const src = w.primary_location && w.primary_location.source;
+    if(!src || src.type !== "journal") continue;
+    if(!src.issn_l) continue;                 // drop abstract books / non-journals
+    if(coreOnly && !src.is_core) continue;    // keep indexed venues only
+
+    const id = src.id.split("/").pop();
+    if(!agg[id]){
+      agg[id] = { id:id, name:src.display_name, publisher:src.host_organization_name || "",
+                  issn:src.issn_l || "", core:!!src.is_core, score:0, count:0, papers:[] };
+    }
+    const rel = (w.relevance_score || 0) / maxRel;
+    const rec = Math.max(0, 1 - (nowYr - (w.publication_year || nowYr)) / 12);
+    agg[id].score += rel * (0.75 + 0.25 * rec);
+    agg[id].count += 1;
+    if(agg[id].papers.length < 3) agg[id].papers.push(w);
+  }
+  return Object.keys(agg).map(k => agg[k]).sort((a,b) => b.score - a.score).slice(0, 40);
+}
+
+async function enrich(list){
+  setStatus("저널 지표(인용도 · OA · APC) 조회 중…", true);
+  const ids = list.map(j => j.id).join("|");
+  const sel = "select=id,display_name,summary_stats,apc_usd,is_oa,is_in_doaj,homepage_url";
+  let res;
+  try{ res = await fetch(API + "/sources?filter=ids.openalex:" + ids + "&per-page=50&" + sel + "&" + MAILTO).then(r => r.json()); }
+  catch(e){ res = {results:[]}; }
+  const meta = Object.create(null);
+  for(const s of (res.results || [])) meta[s.id.split("/").pop()] = s;
+
+  for(const j of list){
+    const m = meta[j.id] || {};
+    j.if2  = m.summary_stats ? m.summary_stats["2yr_mean_citedness"] : null;
+    j.h    = m.summary_stats ? m.summary_stats.h_index : null;
+    j.apc  = (m.apc_usd === undefined || m.apc_usd === null) ? null : m.apc_usd;
+    j.oa   = !!m.is_oa;
+    j.doaj = !!m.is_in_doaj;
+    j.home = m.homepage_url || "";
+  }
+  return list;
+}
+
+/* ── Run ────────────────────────────────── */
+async function run(keywordsOverride){
+  const title = document.getElementById("title").value.trim();
+  const abs   = document.getElementById("abs").value.trim();
+  const btn   = document.getElementById("goBtn");
+
+  if(!keywordsOverride && !title && !abs){
+    setStatus("⚠️ 제목이나 초록 중 하나는 입력해주세요.");
+    return;
+  }
+  document.getElementById("korNotice").classList.toggle("show", hasKorean(title + " " + abs));
+
   btn.disabled = true;
-  document.getElementById('results').innerHTML = '';
-  document.getElementById('kwbox').innerHTML = '';
+  document.getElementById("kwpanel").classList.remove("show");
   JOURNALS = [];
 
   try{
-    const kw = extractKeywords(title, abs, 8);
-    if(kw.length === 0){ setStatus('⚠️ 의미 있는 키워드를 찾지 못했습니다. 영어로 입력해보세요.'); btn.disabled = false; return; }
-
-    const yrs = parseInt(document.getElementById('years').value);
-    let filter = 'type:article';
-    if(yrs > 0){
-      const from = new Date(); from.setFullYear(from.getFullYear() - yrs);
-      filter += ',from_publication_date:' + from.toISOString().slice(0,10);
+    let kw = keywordsOverride && keywordsOverride.length ? keywordsOverride.slice() : extractKeywords(title, abs, 8);
+    if(kw.length < 2){
+      setStatus("");
+      document.getElementById("results").innerHTML = emptyState("🔤", "영어 키워드가 부족합니다",
+        "국제 저널 DB는 영어로 색인되어 있습니다. 영문 제목·초록 또는 핵심 영어 용어를 2개 이상 입력해 주세요.");
+      btn.disabled = false; return;
     }
-    const sel = 'select=display_name,relevance_score,publication_year,cited_by_count,doi,primary_location';
 
-    const pool = new Map();
-    let usedTerms = [];
-    for(let k = Math.min(6, kw.length); k >= 2; k--){
-      const q = kw.slice(0, k).join(' ');
-      setStatus('유사 논문 검색 중… (키워드 ' + k + '개)', true);
-      const url = API + '/works?search=' + encodeURIComponent(q) + '&filter=' + filter +
-                  '&sort=relevance_score:desc&per-page=100&' + sel;
-      const res = await fetch(url).then(r => r.ok ? r.json() : {results:[]}).catch(() => ({results:[]}));
-      const got = res.results || [];
-      if(got.length && !usedTerms.length) usedTerms = kw.slice(0, k);
-      for(const w of got) if(!pool.has(w.display_name)) pool.set(w.display_name, w);
-      if(pool.size >= 80) break;
-    }
-    const works = [...pool.values()];
+    showSkeletons(4);
+    const yrs = parseInt(document.getElementById("years").value, 10);
+    const { works, used } = await searchWorks(kw, yrs);
+    LAST_WORKS = works.length;
+
+    CUR_KEYWORDS = keywordsOverride && keywordsOverride.length ? kw : used;
+    renderKeywords();
 
     if(works.length === 0){
-      setStatus('유사 논문을 찾지 못했습니다. 초록을 영어로 입력하거나 키워드를 조정해보세요.');
+      setStatus("");
+      document.getElementById("results").innerHTML = emptyState("🔍", "유사 논문을 찾지 못했습니다",
+        "키워드가 너무 구체적일 수 있습니다. 위 키워드 패널에서 희귀한 단어를 지우고 다시 검색해 보세요.");
       btn.disabled = false; return;
     }
 
-    const shown = usedTerms.length ? usedTerms : kw.slice(0, 4);
-    document.getElementById('kwbox').innerHTML =
-      '<b>검색 키워드:</b> ' + shown.map(t => '<span class="chip">' + esc(t) + '</span>').join(' ');
+    setStatus("유사 논문 " + works.length + "편 발견 · 저널 집계 중…", true);
+    const coreOnly = document.getElementById("coreonly").checked;
+    let list = aggregate(works, coreOnly);
 
-    setStatus('유사 논문 ' + works.length + '편 발견 · 저널 집계 중…', true);
-
-    const agg = {};
-    const maxRel = Math.max(...works.map(w => w.relevance_score || 0), 1);
-    const nowYr = new Date().getFullYear();
-    for(const w of works){
-      const src = w.primary_location && w.primary_location.source;
-      if(!src || src.type !== 'journal') continue;
-      const id = src.id.split('/').pop();
-      if(!agg[id]) agg[id] = { id, name: src.display_name, publisher: src.host_organization_name || '', issn: src.issn_l || '', score: 0, count: 0, papers: [] };
-      const rel = (w.relevance_score || 0) / maxRel;
-      const rec = Math.max(0, 1 - (nowYr - (w.publication_year || nowYr)) / 12);
-      agg[id].score += rel * (0.75 + 0.25 * rec);
-      agg[id].count += 1;
-      if(agg[id].papers.length < 3) agg[id].papers.push(w);
-    }
-
-    let list = Object.values(agg).sort((a,b) => b.score - a.score).slice(0, 40);
     if(list.length === 0){
-      setStatus('저널을 집계하지 못했습니다. 검색어를 바꿔보세요.');
+      setStatus("");
+      document.getElementById("results").innerHTML = emptyState("📭", "집계된 저널이 없습니다",
+        "‘핵심 색인 저널만’ 옵션을 해제하면 더 많은 결과를 볼 수 있습니다.");
       btn.disabled = false; return;
     }
 
-    setStatus('저널 지표(인용도·OA·APC) 조회 중…', true);
-    const ids = list.map(j => j.id).join('|');
-    const srcSel = 'select=id,display_name,summary_stats,apc_usd,is_oa,is_in_doaj,homepage_url';
-    const srcRes = await fetch(API + '/sources?filter=ids.openalex:' + ids + '&per-page=50&' + srcSel)
-                         .then(r => r.json()).catch(() => ({results:[]}));
-    const meta = {};
-    for(const s of (srcRes.results || [])) meta[s.id.split('/').pop()] = s;
+    list = await enrich(list);
 
-    for(const j of list){
-      const m = meta[j.id] || {};
-      j.if2  = m.summary_stats ? m.summary_stats['2yr_mean_citedness'] : null;
-      j.h    = m.summary_stats ? m.summary_stats.h_index : null;
-      j.apc  = (m.apc_usd === undefined) ? null : m.apc_usd;
-      j.oa   = !!m.is_oa;
-      j.doaj = !!m.is_in_doaj;
-      j.home = m.homepage_url;
-    }
+    // post-filters
+    if(document.getElementById("oaonly").checked) list = list.filter(j => j.oa);
+    const apcMax = parseInt(document.getElementById("apcmax").value, 10);
+    if(apcMax === 1)      list = list.filter(j => j.apc === 0);
+    else if(apcMax > 1)   list = list.filter(j => j.apc != null && j.apc <= apcMax);
 
-    if(document.getElementById('oaonly').checked) list = list.filter(j => j.oa);
     if(list.length === 0){
-      setStatus('조건에 맞는 오픈액세스 저널이 없습니다. 체크를 해제해보세요.');
+      setStatus("");
+      document.getElementById("results").innerHTML = emptyState("🚫", "필터 조건에 맞는 저널이 없습니다",
+        "오픈액세스 또는 게재료 상한 조건을 완화해 보세요.");
       btn.disabled = false; return;
     }
 
-    const topn = parseInt(document.getElementById('topn').value);
+    const topn = parseInt(document.getElementById("topn").value, 10);
     JOURNALS = list.slice(0, topn);
-    const maxScore = Math.max(...JOURNALS.map(j => j.score), 1);
-    JOURNALS.forEach(j => j.match = Math.round(100 * j.score / maxScore));
+    const maxScore = Math.max.apply(null, JOURNALS.map(j => j.score).concat([0.0001]));
+    JOURNALS.forEach(j => { j.match = Math.max(4, Math.round(100 * j.score / maxScore)); });
 
-    setStatus('✅ 유사 논문 ' + works.length + '편 분석 → 저널 ' + JOURNALS.length + '곳 추천');
+    setStatus("✅ 유사 논문 " + works.length + "편 분석 → 저널 " + JOURNALS.length + "곳 추천");
     render();
-  } catch(e){
-    setStatus('오류가 발생했습니다: ' + esc(e.message) + ' — 잠시 후 다시 시도해주세요.');
+  }catch(err){
+    setStatus("");
+    document.getElementById("results").innerHTML = emptyState("⚠️", "오류가 발생했습니다", esc(err.message) + " — 잠시 후 다시 시도해 주세요.");
   }
   btn.disabled = false;
 }
 
-function render(){
-  const sortEl = document.getElementById('sortSel');
-  const mode = sortEl ? sortEl.value : 'match';
-  const list = [...JOURNALS].sort((a,b) => {
-    if(mode === 'if')  return (b.if2 || 0) - (a.if2 || 0);
-    if(mode === 'h')   return (b.h || 0) - (a.h || 0);
-    if(mode === 'apc') return (a.apc == null ? 1e9 : a.apc) - (b.apc == null ? 1e9 : b.apc);
-    return b.score - a.score;
-  });
-
-  const opt = (v,label) => '<option value="' + v + '"' + (mode === v ? ' selected' : '') + '>' + label + '</option>';
-  let html = '<div class="sortbar"><h2>추천 저널</h2><select id="sortSel">' +
-    opt('match','정렬: 적합도순') + opt('if','정렬: 인용도(IF유사)순') +
-    opt('h','정렬: h-index순') + opt('apc','정렬: 게재료 낮은순') + '</select></div>';
-
-  list.forEach((j,i) => {
-    const papers = j.papers.map(p =>
-      '<div class="paper"><a href="' + esc(p.doi || '#') + '" target="_blank">' + esc(p.display_name) + '</a>' +
-      '<div class="meta">' + (p.publication_year || '') + ' · 피인용 ' + (p.cited_by_count || 0) + '회</div></div>'
-    ).join('');
-
-    html += '<div class="jcard">' +
-      '<div class="rank">#' + (i+1) + '</div>' +
-      '<div class="jname">' + (j.home ? '<a href="' + esc(j.home) + '" target="_blank">' + esc(j.name) + '</a>' : esc(j.name)) + '</div>' +
-      '<div class="pub">' + esc(j.publisher) + (j.issn ? ' · ISSN ' + esc(j.issn) : '') + '</div>' +
-      '<div class="matchbar"><div style="width:' + j.match + '%"></div></div>' +
-      '<div class="matchlabel">적합도 ' + j.match + '% · 유사 논문 ' + j.count + '편 게재</div>' +
-      '<div class="chips">' +
-        (j.if2 != null ? '<span class="chip">2yr citedness <b>' + j.if2.toFixed(1) + '</b></span>' : '') +
-        (j.h != null ? '<span class="chip">h-index <b>' + j.h + '</b></span>' : '') +
-        '<span class="chip ' + (j.oa ? 'oa' : '') + '">' + (j.oa ? '<b>Open Access</b>' : '구독형') + (j.doaj ? ' · DOAJ' : '') + '</span>' +
-        (j.apc != null ? '<span class="chip">APC <b>$' + j.apc.toLocaleString() + '</b></span>' : '') +
-      '</div>' +
-      '<details><summary>이 저널에 실린 유사 논문 보기 (' + j.papers.length + ')</summary>' + papers + '</details>' +
-      '</div>';
-  });
-
-  const box = document.getElementById('results');
-  box.innerHTML = html;
-  document.getElementById('sortSel').addEventListener('change', render);
+function emptyState(icon, h, p){
+  return '<div class="empty"><div class="big">' + icon + '</div><h3>' + esc(h) + '</h3><p>' + p + '</p></div>';
 }
 
-document.getElementById('goBtn').addEventListener('click', run);
-document.getElementById('abs').addEventListener('keydown', e => {
-  if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run();
+/* ── Keyword chips ──────────────────────── */
+function renderKeywords(){
+  const box = document.getElementById("kwlist");
+  box.innerHTML = CUR_KEYWORDS.map((t,i) =>
+    '<span class="kw">' + esc(t) + '<button data-i="' + i + '" aria-label="키워드 삭제" title="삭제">×</button></span>'
+  ).join("") + '<input class="kwadd" id="kwadd" placeholder="+ 키워드 추가" aria-label="키워드 추가">';
+  document.getElementById("kwpanel").classList.add("show");
+
+  box.querySelectorAll(".kw button").forEach(b => {
+    b.addEventListener("click", () => {
+      CUR_KEYWORDS.splice(parseInt(b.dataset.i,10), 1);
+      renderKeywords();
+    });
+  });
+  const add = document.getElementById("kwadd");
+  add.addEventListener("keydown", e => {
+    if(e.key === "Enter"){
+      const v = add.value.trim().toLowerCase();
+      if(v && CUR_KEYWORDS.indexOf(v) === -1){ CUR_KEYWORDS.push(v); renderKeywords(); document.getElementById("kwadd").focus(); }
+      e.preventDefault();
+    }
+  });
+}
+
+/* ── Render results ─────────────────────── */
+function sortList(mode){
+  const l = JOURNALS.slice();
+  if(mode === "if")  return l.sort((a,b) => (b.if2||0) - (a.if2||0));
+  if(mode === "h")   return l.sort((a,b) => (b.h||0) - (a.h||0));
+  if(mode === "apc") return l.sort((a,b) => (a.apc==null?1e9:a.apc) - (b.apc==null?1e9:b.apc));
+  return l.sort((a,b) => b.score - a.score);
+}
+
+function render(){
+  const sortEl = document.getElementById("sortSel");
+  const mode = sortEl ? sortEl.value : "match";
+  const list = sortList(mode);
+  const opt = (v,label) => '<option value="' + v + '"' + (mode===v?" selected":"") + '>' + label + '</option>';
+
+  let html =
+    '<div class="toolbar">' +
+      '<h2>추천 저널 <span>' + list.length + '곳 · 유사 논문 ' + LAST_WORKS + '편 기준</span></h2>' +
+      '<div class="tools">' +
+        '<select id="sortSel" aria-label="정렬 기준">' +
+          opt("match","적합도순") + opt("if","인용도(IF유사)순") + opt("h","h-index순") + opt("apc","게재료 낮은순") +
+        '</select>' +
+        '<button class="csv" id="csvBtn">⬇ CSV 내보내기</button>' +
+      '</div>' +
+    '</div>';
+
+  list.forEach((j, i) => {
+    const papers = j.papers.map(p =>
+      '<div class="paper"><a href="' + esc(p.doi || "#") + '" target="_blank" rel="noopener">' + esc(p.display_name) + '</a>' +
+      '<div class="meta">' + (p.publication_year || "") + " · 피인용 " + (p.cited_by_count || 0) + "회</div></div>"
+    ).join("");
+
+    const guide = "https://www.google.com/search?q=" + encodeURIComponent('"' + j.name + '" guide for authors submission');
+
+    html +=
+      '<div class="jcard">' +
+        '<div class="jtop">' +
+          '<div class="rank' + (i===0?" top":"") + '">' + (i+1) + '</div>' +
+          '<div class="jmeta">' +
+            '<div class="jname">' + (j.home ? '<a href="' + esc(j.home) + '" target="_blank" rel="noopener">' + esc(j.name) + "</a>" : esc(j.name)) + "</div>" +
+            '<div class="pub">' + esc(j.publisher || "발행처 정보 없음") + (j.issn ? " · ISSN " + esc(j.issn) : "") + "</div>" +
+          "</div>" +
+        "</div>" +
+
+        '<div class="matchwrap">' +
+          '<div class="matchbar"><div style="width:' + j.match + '%"></div></div>' +
+          '<div class="matchpct">' + j.match + "%</div>" +
+        "</div>" +
+        '<div class="matchlabel">이 저널에 유사 논문 <b>' + j.count + "편</b> 게재</div>" +
+
+        '<div class="chips">' +
+          (j.if2 != null ? '<span class="chip">2yr citedness <b>' + j.if2.toFixed(1) + "</b></span>" : "") +
+          (j.h != null ? '<span class="chip">h-index <b>' + j.h + "</b></span>" : "") +
+          (j.oa ? '<span class="chip oa"><b>Open Access</b>' + (j.doaj ? " · DOAJ" : "") + "</span>"
+                : '<span class="chip">구독형</span>') +
+          (j.core ? '<span class="chip core">핵심 색인</span>' : "") +
+          (j.apc != null
+              ? '<span class="chip">APC <b>' + (j.apc === 0 ? "무료" : "$" + j.apc.toLocaleString()) + "</b></span>"
+              : '<span class="chip">APC 정보 없음</span>') +
+        "</div>" +
+
+        "<details><summary>이 저널에 실린 유사 논문 " + j.papers.length + "편 보기</summary>" +
+          papers +
+          '<div class="links">' +
+            (j.home ? '<a href="' + esc(j.home) + '" target="_blank" rel="noopener">🏠 저널 홈페이지</a>' : "") +
+            '<a href="https://openalex.org/' + esc(j.id) + '" target="_blank" rel="noopener">📊 OpenAlex 통계</a>' +
+            '<a href="' + esc(guide) + '" target="_blank" rel="noopener">📝 투고 규정 검색</a>' +
+          "</div>" +
+        "</details>" +
+      "</div>";
+  });
+
+  const box = document.getElementById("results");
+  box.innerHTML = html;
+  document.getElementById("sortSel").addEventListener("change", render);
+  document.getElementById("csvBtn").addEventListener("click", () => exportCSV(list));
+}
+
+/* ── CSV ────────────────────────────────── */
+function exportCSV(list){
+  const head = ["순위","저널명","발행처","ISSN","적합도(%)","유사논문수","2yr_citedness","h_index","오픈액세스","DOAJ","핵심색인","APC_USD","홈페이지"];
+  const q = v => '"' + String(v==null?"":v).replace(/"/g,'""') + '"';
+  const rows = list.map((j,i) => [
+    i+1, j.name, j.publisher, j.issn, j.match, j.count,
+    j.if2!=null?j.if2.toFixed(2):"", j.h!=null?j.h:"",
+    j.oa?"Y":"N", j.doaj?"Y":"N", j.core?"Y":"N",
+    j.apc!=null?j.apc:"", j.home
+  ].map(q).join(","));
+  const csv = "﻿" + head.map(q).join(",") + "\n" + rows.join("\n");
+  const url = URL.createObjectURL(new Blob([csv], {type:"text/csv;charset=utf-8;"}));
+  const a = document.createElement("a");
+  a.href = url; a.download = "journal-finder-" + new Date().toISOString().slice(0,10) + ".csv";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ── Theme ──────────────────────────────── */
+function applyTheme(t){
+  document.documentElement.setAttribute("data-theme", t);
+  document.getElementById("themeBtn").textContent = t === "dark" ? "☀️" : "🌙";
+  try{ localStorage.setItem("jf-theme", t); }catch(e){}
+}
+(function initTheme(){
+  let t = null;
+  try{ t = localStorage.getItem("jf-theme"); }catch(e){}
+  if(!t) t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  applyTheme(t);
+})();
+
+/* ── Wiring ─────────────────────────────── */
+document.getElementById("themeBtn").addEventListener("click", () => {
+  applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
+});
+document.getElementById("goBtn").addEventListener("click", () => run());
+document.getElementById("rerunBtn").addEventListener("click", () => {
+  if(CUR_KEYWORDS.length >= 2) run(CUR_KEYWORDS);
+  else setStatus("⚠️ 키워드를 2개 이상 남겨주세요.");
+});
+document.getElementById("abs").addEventListener("keydown", e => {
+  if(e.key === "Enter" && (e.ctrlKey || e.metaKey)) run();
+});
+document.querySelectorAll(".ex").forEach(b => {
+  b.addEventListener("click", () => {
+    const ex = EXAMPLES[b.dataset.ex];
+    document.getElementById("title").value = ex.t;
+    document.getElementById("abs").value = ex.a;
+    document.getElementById("korNotice").classList.remove("show");
+    document.getElementById("abs").focus();
+  });
+});
+["title","abs"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => {
+    const s = document.getElementById("title").value + " " + document.getElementById("abs").value;
+    document.getElementById("korNotice").classList.toggle("show", hasKorean(s));
+  });
 });
 </script>
 </body>
