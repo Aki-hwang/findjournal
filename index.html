@@ -18,12 +18,12 @@
     --radius:16px;
   }
   html[data-theme="dark"]{
-    --bg:#0d0f16; --bg2:#141826; --card:#161a26; --border:#262c3d; --border2:#333a50;
-    --text:#e9ecf5; --sub:#9aa3bd; --faint:#6b7391;
-    --accent:#7c8aff; --accent2:#a78bfa; --accent-soft:#1d2138;
-    --good:#4ade80; --good-soft:#132a1e; --gold:#fbbf24; --gold-soft:#2a2314;
-    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
-    --shadow-lg:0 4px 12px rgba(0,0,0,.4), 0 24px 48px rgba(0,0,0,.5);
+    --bg:#1e2230; --bg2:#282d3e; --card:#262b3a; --border:#394054; --border2:#464e66;
+    --text:#f0f2f8; --sub:#b3bad0; --faint:#8b93ad;
+    --accent:#94a2ff; --accent2:#b79dfb; --accent-soft:#333a55;
+    --good:#5ee68f; --good-soft:#1e3a2b; --gold:#fcc94a; --gold-soft:#3a3220;
+    --shadow:0 1px 2px rgba(0,0,0,.18), 0 8px 24px rgba(0,0,0,.22);
+    --shadow-lg:0 4px 12px rgba(0,0,0,.24), 0 24px 48px rgba(0,0,0,.3);
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{
@@ -649,8 +649,7 @@ function applyTheme(t){
 (function initTheme(){
   let t = null;
   try{ t = localStorage.getItem("jf-theme"); }catch(e){}
-  if(!t) t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  applyTheme(t);
+  applyTheme(t === "dark" ? "dark" : "light");   // light by default; dark only if chosen
 })();
 
 /* ── Wiring ─────────────────────────────── */
