@@ -6,9 +6,9 @@
 <title>Journal Finder — 내 논문에 맞는 저널 찾기</title>
 <style>
   :root{
-    --bg:#0f1117; --card:#1a1d27; --card2:#22263300; --border:#2a2f3e;
+    --bg:#0f1117; --card:#1a1d27; --border:#2a2f3e;
     --text:#e8eaf0; --sub:#9aa1b5; --accent:#6c8cff; --accent2:#8f6cff;
-    --good:#4ade80; --warn:#fbbf24; --chip:#252a3a;
+    --good:#4ade80; --chip:#252a3a;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--bg);color:var(--text);font-family:'Pretendard','Segoe UI','Apple SD Gothic Neo',sans-serif;line-height:1.55}
@@ -28,7 +28,9 @@
   button.go{margin-top:20px;width:100%;padding:14px;border:none;border-radius:10px;font-size:1.05rem;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:opacity .2s}
   button.go:hover{opacity:.9}
   button.go:disabled{opacity:.45;cursor:wait}
-  #status{text-align:center;color:var(--sub);margin:22px 0;font-size:.92rem;min-height:1.4em}
+  #status{text-align:center;color:var(--sub);margin:22px 0 6px;font-size:.92rem;min-height:1.4em}
+  #kwbox{text-align:center;font-size:.82rem;color:var(--sub);margin-bottom:8px}
+  #kwbox .chip{display:inline-block;margin:3px 2px}
   .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:8px}
   @keyframes spin{to{transform:rotate(360deg)}}
   .sortbar{display:flex;justify-content:space-between;align-items:center;margin:26px 0 14px;flex-wrap:wrap;gap:10px}
@@ -91,26 +93,42 @@
       </div>
       <div class="checkline"><input type="checkbox" id="oaonly"><label for="oaonly" style="margin:0">오픈액세스 저널만</label></div>
     </div>
-    <button class="go" id="goBtn" onclick="run()">🔍 저널 추천받기</button>
+    <button class="go" id="goBtn">🔍 저널 추천받기</button>
     <p class="hint">데이터: OpenAlex (무료 공개 학술 DB, 2.5억+ 논문) · 서버 없이 브라우저에서 직접 조회합니다</p>
   </div>
 
   <div id="status"></div>
-
+  <div id="kwbox"></div>
   <div id="results"></div>
 
-  <footer>유사 논문 상위 200편의 게재 저널을 적합도(관련성×빈도×최신성)로 집계합니다.<br>
+  <footer>제목·초록에서 핵심 키워드를 추출해 유사 논문을 찾고, 그 논문들의 게재 저널을 적합도(관련성×빈도×최신성)로 집계합니다.<br>
   2yr citedness는 임팩트팩터와 유사한 지표입니다 · 데이터 출처: <a href="https://openalex.org" target="_blank">OpenAlex</a></footer>
 </div>
 
 <script>
 const API = 'https://api.openalex.org';
-let JOURNALS = []; // aggregated results kept for re-sorting
+let JOURNALS = [];
+
+const STOP = new Set(("a an the and or but of for to in on with by from as at is are was were be been being this that these those " +
+"we our us it its their they i you he she which who what when where why how all any both each few more most other some such " +
+"no nor not only own same so than too very can will just should now using used use novel present presents proposed shows show " +
+"study paper work works results result method methods approach here also into over under between during via while about based " +
+"new high highly real time first second one two three toward towards through there").split(/\s+/));
+
+// OpenAlex ?search= behaves like AND across terms, so feed it only the most
+// distinctive words, then back off (drop the weakest term) until the pool is big enough.
+function extractKeywords(title, abs, n){
+  const txt = (title + ' ' + title + ' ' + abs).toLowerCase();
+  const toks = txt.match(/[a-z][a-z0-9\-]{2,}/g) || [];
+  const freq = {};
+  for(const t of toks){ if(STOP.has(t)) continue; freq[t] = (freq[t]||0) + 1; }
+  return Object.entries(freq).sort((a,b) => b[1]-a[1]).slice(0, n).map(e => e[0]);
+}
 
 function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function setStatus(msg, spin){
-  document.getElementById('status').innerHTML = msg ? (spin?'<span class="spinner"></span>':'') + msg : '';
+  document.getElementById('status').innerHTML = msg ? (spin ? '<span class="spinner"></span>' : '') + msg : '';
 }
 
 async function run(){
@@ -121,34 +139,47 @@ async function run(){
   const btn = document.getElementById('goBtn');
   btn.disabled = true;
   document.getElementById('results').innerHTML = '';
+  document.getElementById('kwbox').innerHTML = '';
   JOURNALS = [];
 
   try{
-    // Build query: title + truncated abstract
-    let q = (title + ' ' + abs).trim().replace(/\s+/g,' ').slice(0, 1200);
+    const kw = extractKeywords(title, abs, 8);
+    if(kw.length === 0){ setStatus('⚠️ 의미 있는 키워드를 찾지 못했습니다. 영어로 입력해보세요.'); btn.disabled = false; return; }
 
     const yrs = parseInt(document.getElementById('years').value);
-    let filter = 'title_and_abstract.search:' + encodeURIComponent(q.replace(/,/g,' '));
+    let filter = 'type:article';
     if(yrs > 0){
       const from = new Date(); from.setFullYear(from.getFullYear() - yrs);
       filter += ',from_publication_date:' + from.toISOString().slice(0,10);
     }
-    filter += ',type:article';
-
-    setStatus('유사 논문 검색 중…', true);
     const sel = 'select=display_name,relevance_score,publication_year,cited_by_count,doi,primary_location';
-    const urls = [1,2].map(p => `${API}/works?filter=${filter}&sort=relevance_score:desc&per-page=100&page=${p}&${sel}`);
-    const pages = await Promise.all(urls.map(u => fetch(u).then(r => r.ok ? r.json() : {results:[]}).catch(()=>({results:[]}))));
-    const works = pages.flatMap(p => p.results || []);
+
+    const pool = new Map();
+    let usedTerms = [];
+    for(let k = Math.min(6, kw.length); k >= 2; k--){
+      const q = kw.slice(0, k).join(' ');
+      setStatus('유사 논문 검색 중… (키워드 ' + k + '개)', true);
+      const url = API + '/works?search=' + encodeURIComponent(q) + '&filter=' + filter +
+                  '&sort=relevance_score:desc&per-page=100&' + sel;
+      const res = await fetch(url).then(r => r.ok ? r.json() : {results:[]}).catch(() => ({results:[]}));
+      const got = res.results || [];
+      if(got.length && !usedTerms.length) usedTerms = kw.slice(0, k);
+      for(const w of got) if(!pool.has(w.display_name)) pool.set(w.display_name, w);
+      if(pool.size >= 80) break;
+    }
+    const works = [...pool.values()];
 
     if(works.length === 0){
       setStatus('유사 논문을 찾지 못했습니다. 초록을 영어로 입력하거나 키워드를 조정해보세요.');
       btn.disabled = false; return;
     }
 
-    setStatus(`유사 논문 ${works.length}편 발견 · 저널 집계 중…`, true);
+    const shown = usedTerms.length ? usedTerms : kw.slice(0, 4);
+    document.getElementById('kwbox').innerHTML =
+      '<b>검색 키워드:</b> ' + shown.map(t => '<span class="chip">' + esc(t) + '</span>').join(' ');
 
-    // Aggregate by journal
+    setStatus('유사 논문 ' + works.length + '편 발견 · 저널 집계 중…', true);
+
     const agg = {};
     const maxRel = Math.max(...works.map(w => w.relevance_score || 0), 1);
     const nowYr = new Date().getFullYear();
@@ -157,8 +188,8 @@ async function run(){
       if(!src || src.type !== 'journal') continue;
       const id = src.id.split('/').pop();
       if(!agg[id]) agg[id] = { id, name: src.display_name, publisher: src.host_organization_name || '', issn: src.issn_l || '', score: 0, count: 0, papers: [] };
-      const rel = (w.relevance_score || 0) / maxRel;                    // 0~1 relevance
-      const rec = Math.max(0, 1 - (nowYr - (w.publication_year || nowYr)) / 12); // recency boost
+      const rel = (w.relevance_score || 0) / maxRel;
+      const rec = Math.max(0, 1 - (nowYr - (w.publication_year || nowYr)) / 12);
       agg[id].score += rel * (0.75 + 0.25 * rec);
       agg[id].count += 1;
       if(agg[id].papers.length < 3) agg[id].papers.push(w);
@@ -170,32 +201,36 @@ async function run(){
       btn.disabled = false; return;
     }
 
-    // Fetch journal metrics in one batch call
     setStatus('저널 지표(인용도·OA·APC) 조회 중…', true);
     const ids = list.map(j => j.id).join('|');
-    const srcSel = 'select=id,display_name,summary_stats,apc_usd,is_oa,is_in_doaj,homepage_url,works_count';
-    const srcRes = await fetch(`${API}/sources?filter=ids.openalex:${ids}&per-page=50&${srcSel}`).then(r=>r.json()).catch(()=>({results:[]}));
+    const srcSel = 'select=id,display_name,summary_stats,apc_usd,is_oa,is_in_doaj,homepage_url';
+    const srcRes = await fetch(API + '/sources?filter=ids.openalex:' + ids + '&per-page=50&' + srcSel)
+                         .then(r => r.json()).catch(() => ({results:[]}));
     const meta = {};
-    for(const s of (srcRes.results||[])) meta[s.id.split('/').pop()] = s;
+    for(const s of (srcRes.results || [])) meta[s.id.split('/').pop()] = s;
 
     for(const j of list){
       const m = meta[j.id] || {};
-      j.if2 = m.summary_stats ? m.summary_stats['2yr_mean_citedness'] : null;
-      j.h = m.summary_stats ? m.summary_stats.h_index : null;
-      j.apc = m.apc_usd;
-      j.oa = !!m.is_oa;
+      j.if2  = m.summary_stats ? m.summary_stats['2yr_mean_citedness'] : null;
+      j.h    = m.summary_stats ? m.summary_stats.h_index : null;
+      j.apc  = (m.apc_usd === undefined) ? null : m.apc_usd;
+      j.oa   = !!m.is_oa;
       j.doaj = !!m.is_in_doaj;
       j.home = m.homepage_url;
     }
 
     if(document.getElementById('oaonly').checked) list = list.filter(j => j.oa);
+    if(list.length === 0){
+      setStatus('조건에 맞는 오픈액세스 저널이 없습니다. 체크를 해제해보세요.');
+      btn.disabled = false; return;
+    }
 
     const topn = parseInt(document.getElementById('topn').value);
     JOURNALS = list.slice(0, topn);
-    const maxScore = Math.max(...JOURNALS.map(j=>j.score), 1);
+    const maxScore = Math.max(...JOURNALS.map(j => j.score), 1);
     JOURNALS.forEach(j => j.match = Math.round(100 * j.score / maxScore));
 
-    setStatus(`✅ 유사 논문 ${works.length}편 분석 → 저널 ${JOURNALS.length}곳 추천`);
+    setStatus('✅ 유사 논문 ' + works.length + '편 분석 → 저널 ' + JOURNALS.length + '곳 추천');
     render();
   } catch(e){
     setStatus('오류가 발생했습니다: ' + esc(e.message) + ' — 잠시 후 다시 시도해주세요.');
@@ -204,50 +239,50 @@ async function run(){
 }
 
 function render(){
-  const mode = (document.getElementById('sortSel')||{}).value || 'match';
+  const sortEl = document.getElementById('sortSel');
+  const mode = sortEl ? sortEl.value : 'match';
   const list = [...JOURNALS].sort((a,b) => {
-    if(mode==='if') return (b.if2||0)-(a.if2||0);
-    if(mode==='h') return (b.h||0)-(a.h||0);
-    if(mode==='apc') return (a.apc==null?1e9:a.apc)-(b.apc==null?1e9:b.apc);
-    return b.score-a.score;
+    if(mode === 'if')  return (b.if2 || 0) - (a.if2 || 0);
+    if(mode === 'h')   return (b.h || 0) - (a.h || 0);
+    if(mode === 'apc') return (a.apc == null ? 1e9 : a.apc) - (b.apc == null ? 1e9 : b.apc);
+    return b.score - a.score;
   });
 
-  let html = `<div class="sortbar"><h2>추천 저널</h2>
-    <select id="sortSel" onchange="render()">
-      <option value="match" ${mode==='match'?'selected':''}>정렬: 적합도순</option>
-      <option value="if" ${mode==='if'?'selected':''}>정렬: 인용도(IF유사)순</option>
-      <option value="h" ${mode==='h'?'selected':''}>정렬: h-index순</option>
-      <option value="apc" ${mode==='apc'?'selected':''}>정렬: 게재료 낮은순</option>
-    </select></div>`;
+  const opt = (v,label) => '<option value="' + v + '"' + (mode === v ? ' selected' : '') + '>' + label + '</option>';
+  let html = '<div class="sortbar"><h2>추천 저널</h2><select id="sortSel">' +
+    opt('match','정렬: 적합도순') + opt('if','정렬: 인용도(IF유사)순') +
+    opt('h','정렬: h-index순') + opt('apc','정렬: 게재료 낮은순') + '</select></div>';
 
   list.forEach((j,i) => {
-    const papers = j.papers.map(p => `
-      <div class="paper">
-        <a href="${esc(p.doi||'#')}" target="_blank">${esc(p.display_name)}</a>
-        <div class="meta">${p.publication_year||''} · 피인용 ${p.cited_by_count??0}회</div>
-      </div>`).join('');
-    html += `
-    <div class="jcard">
-      <div class="rank">#${i+1}</div>
-      <div class="jname">${j.home?`<a href="${esc(j.home)}" target="_blank">${esc(j.name)}</a>`:esc(j.name)}</div>
-      <div class="pub">${esc(j.publisher)}${j.issn?' · ISSN '+esc(j.issn):''}</div>
-      <div class="matchbar"><div style="width:${j.match}%"></div></div>
-      <div class="matchlabel">적합도 ${j.match}% · 유사 논문 ${j.count}편 게재</div>
-      <div class="chips">
-        ${j.if2!=null?`<span class="chip">2yr citedness <b>${j.if2.toFixed(1)}</b></span>`:''}
-        ${j.h!=null?`<span class="chip">h-index <b>${j.h}</b></span>`:''}
-        <span class="chip ${j.oa?'oa':''}">${j.oa?'<b>Open Access</b>':'구독형'}${j.doaj?' · DOAJ':''}</span>
-        ${j.apc!=null?`<span class="chip">APC <b>$${j.apc.toLocaleString()}</b></span>`:''}
-      </div>
-      <details><summary>이 저널에 실린 유사 논문 보기 (${j.papers.length})</summary>${papers}</details>
-    </div>`;
+    const papers = j.papers.map(p =>
+      '<div class="paper"><a href="' + esc(p.doi || '#') + '" target="_blank">' + esc(p.display_name) + '</a>' +
+      '<div class="meta">' + (p.publication_year || '') + ' · 피인용 ' + (p.cited_by_count || 0) + '회</div></div>'
+    ).join('');
+
+    html += '<div class="jcard">' +
+      '<div class="rank">#' + (i+1) + '</div>' +
+      '<div class="jname">' + (j.home ? '<a href="' + esc(j.home) + '" target="_blank">' + esc(j.name) + '</a>' : esc(j.name)) + '</div>' +
+      '<div class="pub">' + esc(j.publisher) + (j.issn ? ' · ISSN ' + esc(j.issn) : '') + '</div>' +
+      '<div class="matchbar"><div style="width:' + j.match + '%"></div></div>' +
+      '<div class="matchlabel">적합도 ' + j.match + '% · 유사 논문 ' + j.count + '편 게재</div>' +
+      '<div class="chips">' +
+        (j.if2 != null ? '<span class="chip">2yr citedness <b>' + j.if2.toFixed(1) + '</b></span>' : '') +
+        (j.h != null ? '<span class="chip">h-index <b>' + j.h + '</b></span>' : '') +
+        '<span class="chip ' + (j.oa ? 'oa' : '') + '">' + (j.oa ? '<b>Open Access</b>' : '구독형') + (j.doaj ? ' · DOAJ' : '') + '</span>' +
+        (j.apc != null ? '<span class="chip">APC <b>$' + j.apc.toLocaleString() + '</b></span>' : '') +
+      '</div>' +
+      '<details><summary>이 저널에 실린 유사 논문 보기 (' + j.papers.length + ')</summary>' + papers + '</details>' +
+      '</div>';
   });
 
-  document.getElementById('results').innerHTML = html;
+  const box = document.getElementById('results');
+  box.innerHTML = html;
+  document.getElementById('sortSel').addEventListener('change', render);
 }
 
+document.getElementById('goBtn').addEventListener('click', run);
 document.getElementById('abs').addEventListener('keydown', e => {
-  if(e.key==='Enter' && (e.ctrlKey||e.metaKey)) run();
+  if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run();
 });
 </script>
 </body>
