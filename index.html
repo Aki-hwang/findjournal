@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Journal Finder — 내 논문에 맞는 저널 찾기</title>
+<style>
+  :root{
+    --bg:#0f1117; --card:#1a1d27; --card2:#22263300; --border:#2a2f3e;
+    --text:#e8eaf0; --sub:#9aa1b5; --accent:#6c8cff; --accent2:#8f6cff;
+    --good:#4ade80; --warn:#fbbf24; --chip:#252a3a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Pretendard','Segoe UI','Apple SD Gothic Neo',sans-serif;line-height:1.55}
+  .wrap{max-width:980px;margin:0 auto;padding:36px 20px 80px}
+  header{text-align:center;margin-bottom:28px}
+  header h1{font-size:1.9rem;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  header p{color:var(--sub);margin-top:6px;font-size:.95rem}
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px}
+  label{display:block;font-size:.85rem;color:var(--sub);margin:14px 0 6px;font-weight:600}
+  input[type=text],textarea,select{width:100%;background:#12141d;border:1px solid var(--border);border-radius:9px;color:var(--text);padding:11px 13px;font-size:.95rem;font-family:inherit}
+  textarea{min-height:130px;resize:vertical}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
+  .opts{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;align-items:end}
+  .opts>div{flex:1;min-width:150px}
+  .checkline{display:flex;align-items:center;gap:8px;padding-bottom:10px;font-size:.88rem;color:var(--sub);min-width:170px}
+  .checkline input{width:auto}
+  button.go{margin-top:20px;width:100%;padding:14px;border:none;border-radius:10px;font-size:1.05rem;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:opacity .2s}
+  button.go:hover{opacity:.9}
+  button.go:disabled{opacity:.45;cursor:wait}
+  #status{text-align:center;color:var(--sub);margin:22px 0;font-size:.92rem;min-height:1.4em}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:8px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .sortbar{display:flex;justify-content:space-between;align-items:center;margin:26px 0 14px;flex-wrap:wrap;gap:10px}
+  .sortbar h2{font-size:1.15rem}
+  .sortbar select{width:auto;padding:7px 10px;font-size:.85rem}
+  .jcard{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px;position:relative;transition:border-color .2s}
+  .jcard:hover{border-color:var(--accent)}
+  .rank{position:absolute;top:20px;right:20px;font-size:1.5rem;font-weight:800;color:#333a4e}
+  .jname{font-size:1.12rem;font-weight:700;padding-right:60px}
+  .jname a{color:var(--text);text-decoration:none}
+  .jname a:hover{color:var(--accent)}
+  .pub{color:var(--sub);font-size:.83rem;margin-top:2px}
+  .matchbar{height:7px;background:#12141d;border-radius:4px;margin:12px 0 4px;overflow:hidden}
+  .matchbar>div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:4px}
+  .matchlabel{font-size:.78rem;color:var(--sub);margin-bottom:10px}
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0}
+  .chip{background:var(--chip);border-radius:7px;padding:4px 10px;font-size:.79rem;color:var(--sub)}
+  .chip b{color:var(--text);font-weight:600}
+  .chip.oa b{color:var(--good)}
+  details{margin-top:10px}
+  summary{cursor:pointer;font-size:.84rem;color:var(--accent)}
+  .paper{margin:9px 0 0 4px;padding-left:12px;border-left:2px solid var(--border);font-size:.85rem}
+  .paper a{color:var(--text);text-decoration:none}
+  .paper a:hover{color:var(--accent)}
+  .paper .meta{color:var(--sub);font-size:.78rem}
+  footer{text-align:center;color:#555c72;font-size:.78rem;margin-top:44px}
+  footer a{color:#6c7590}
+  .hint{font-size:.78rem;color:#555c72;margin-top:5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📡 Journal Finder</h1>
+    <p>논문 제목·초록을 넣으면, 유사한 논문들이 실제로 실린 저널을 찾아 추천합니다 · 전 분야 지원</p>
+  </header>
+
+  <div class="panel">
+    <label for="title">논문 제목 (선택)</label>
+    <input type="text" id="title" placeholder="예: Antifouling all-polymeric microneedle array for long-term wearable ECG monitoring">
+    <label for="abs">초록 / 핵심 내용 (권장 · 영어로 입력하면 정확도가 높습니다)</label>
+    <textarea id="abs" placeholder="초록을 붙여넣거나, 연구 주제·방법·결과를 2~3문장으로 적어주세요."></textarea>
+    <div class="opts">
+      <div>
+        <label>검색 기간</label>
+        <select id="years">
+          <option value="3">최근 3년</option>
+          <option value="5" selected>최근 5년</option>
+          <option value="10">최근 10년</option>
+          <option value="0">전체 기간</option>
+        </select>
+      </div>
+      <div>
+        <label>추천 저널 수</label>
+        <select id="topn">
+          <option value="10">10개</option>
+          <option value="15" selected>15개</option>
+          <option value="25">25개</option>
+        </select>
+      </div>
+      <div class="checkline"><input type="checkbox" id="oaonly"><label for="oaonly" style="margin:0">오픈액세스 저널만</label></div>
+    </div>
+    <button class="go" id="goBtn" onclick="run()">🔍 저널 추천받기</button>
+    <p class="hint">데이터: OpenAlex (무료 공개 학술 DB, 2.5억+ 논문) · 서버 없이 브라우저에서 직접 조회합니다</p>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="results"></div>
+
+  <footer>유사 논문 상위 200편의 게재 저널을 적합도(관련성×빈도×최신성)로 집계합니다.<br>
+  2yr citedness는 임팩트팩터와 유사한 지표입니다 · 데이터 출처: <a href="https://openalex.org" target="_blank">OpenAlex</a></footer>
+</div>
+
+<script>
+const API = 'https://api.openalex.org';
+let JOURNALS = []; // aggregated results kept for re-sorting
+
+function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function setStatus(msg, spin){
+  document.getElementById('status').innerHTML = msg ? (spin?'<span class="spinner"></span>':'') + msg : '';
+}
+
+async function run(){
+  const title = document.getElementById('title').value.trim();
+  const abs = document.getElementById('abs').value.trim();
+  if(!title && !abs){ setStatus('⚠️ 제목이나 초록 중 하나는 입력해주세요.'); return; }
+
+  const btn = document.getElementById('goBtn');
+  btn.disabled = true;
+  document.getElementById('results').innerHTML = '';
+  JOURNALS = [];
+
+  try{
+    // Build query: title + truncated abstract
+    let q = (title + ' ' + abs).trim().replace(/\s+/g,' ').slice(0, 1200);
+
+    const yrs = parseInt(document.getElementById('years').value);
+    let filter = 'title_and_abstract.search:' + encodeURIComponent(q.replace(/,/g,' '));
+    if(yrs > 0){
+      const from = new Date(); from.setFullYear(from.getFullYear() - yrs);
+      filter += ',from_publication_date:' + from.toISOString().slice(0,10);
+    }
+    filter += ',type:article';
+
+    setStatus('유사 논문 검색 중…', true);
+    const sel = 'select=display_name,relevance_score,publication_year,cited_by_count,doi,primary_location';
+    const urls = [1,2].map(p => `${API}/works?filter=${filter}&sort=relevance_score:desc&per-page=100&page=${p}&${sel}`);
+    const pages = await Promise.all(urls.map(u => fetch(u).then(r => r.ok ? r.json() : {results:[]}).catch(()=>({results:[]}))));
+    const works = pages.flatMap(p => p.results || []);
+
+    if(works.length === 0){
+      setStatus('유사 논문을 찾지 못했습니다. 초록을 영어로 입력하거나 키워드를 조정해보세요.');
+      btn.disabled = false; return;
+    }
+
+    setStatus(`유사 논문 ${works.length}편 발견 · 저널 집계 중…`, true);
+
+    // Aggregate by journal
+    const agg = {};
+    const maxRel = Math.max(...works.map(w => w.relevance_score || 0), 1);
+    const nowYr = new Date().getFullYear();
+    for(const w of works){
+      const src = w.primary_location && w.primary_location.source;
+      if(!src || src.type !== 'journal') continue;
+      const id = src.id.split('/').pop();
+      if(!agg[id]) agg[id] = { id, name: src.display_name, publisher: src.host_organization_name || '', issn: src.issn_l || '', score: 0, count: 0, papers: [] };
+      const rel = (w.relevance_score || 0) / maxRel;                    // 0~1 relevance
+      const rec = Math.max(0, 1 - (nowYr - (w.publication_year || nowYr)) / 12); // recency boost
+      agg[id].score += rel * (0.75 + 0.25 * rec);
+      agg[id].count += 1;
+      if(agg[id].papers.length < 3) agg[id].papers.push(w);
+    }
+
+    let list = Object.values(agg).sort((a,b) => b.score - a.score).slice(0, 40);
+    if(list.length === 0){
+      setStatus('저널을 집계하지 못했습니다. 검색어를 바꿔보세요.');
+      btn.disabled = false; return;
+    }
+
+    // Fetch journal metrics in one batch call
+    setStatus('저널 지표(인용도·OA·APC) 조회 중…', true);
+    const ids = list.map(j => j.id).join('|');
+    const srcSel = 'select=id,display_name,summary_stats,apc_usd,is_oa,is_in_doaj,homepage_url,works_count';
+    const srcRes = await fetch(`${API}/sources?filter=ids.openalex:${ids}&per-page=50&${srcSel}`).then(r=>r.json()).catch(()=>({results:[]}));
+    const meta = {};
+    for(const s of (srcRes.results||[])) meta[s.id.split('/').pop()] = s;
+
+    for(const j of list){
+      const m = meta[j.id] || {};
+      j.if2 = m.summary_stats ? m.summary_stats['2yr_mean_citedness'] : null;
+      j.h = m.summary_stats ? m.summary_stats.h_index : null;
+      j.apc = m.apc_usd;
+      j.oa = !!m.is_oa;
+      j.doaj = !!m.is_in_doaj;
+      j.home = m.homepage_url;
+    }
+
+    if(document.getElementById('oaonly').checked) list = list.filter(j => j.oa);
+
+    const topn = parseInt(document.getElementById('topn').value);
+    JOURNALS = list.slice(0, topn);
+    const maxScore = Math.max(...JOURNALS.map(j=>j.score), 1);
+    JOURNALS.forEach(j => j.match = Math.round(100 * j.score / maxScore));
+
+    setStatus(`✅ 유사 논문 ${works.length}편 분석 → 저널 ${JOURNALS.length}곳 추천`);
+    render();
+  } catch(e){
+    setStatus('오류가 발생했습니다: ' + esc(e.message) + ' — 잠시 후 다시 시도해주세요.');
+  }
+  btn.disabled = false;
+}
+
+function render(){
+  const mode = (document.getElementById('sortSel')||{}).value || 'match';
+  const list = [...JOURNALS].sort((a,b) => {
+    if(mode==='if') return (b.if2||0)-(a.if2||0);
+    if(mode==='h') return (b.h||0)-(a.h||0);
+    if(mode==='apc') return (a.apc==null?1e9:a.apc)-(b.apc==null?1e9:b.apc);
+    return b.score-a.score;
+  });
+
+  let html = `<div class="sortbar"><h2>추천 저널</h2>
+    <select id="sortSel" onchange="render()">
+      <option value="match" ${mode==='match'?'selected':''}>정렬: 적합도순</option>
+      <option value="if" ${mode==='if'?'selected':''}>정렬: 인용도(IF유사)순</option>
+      <option value="h" ${mode==='h'?'selected':''}>정렬: h-index순</option>
+      <option value="apc" ${mode==='apc'?'selected':''}>정렬: 게재료 낮은순</option>
+    </select></div>`;
+
+  list.forEach((j,i) => {
+    const papers = j.papers.map(p => `
+      <div class="paper">
+        <a href="${esc(p.doi||'#')}" target="_blank">${esc(p.display_name)}</a>
+        <div class="meta">${p.publication_year||''} · 피인용 ${p.cited_by_count??0}회</div>
+      </div>`).join('');
+    html += `
+    <div class="jcard">
+      <div class="rank">#${i+1}</div>
+      <div class="jname">${j.home?`<a href="${esc(j.home)}" target="_blank">${esc(j.name)}</a>`:esc(j.name)}</div>
+      <div class="pub">${esc(j.publisher)}${j.issn?' · ISSN '+esc(j.issn):''}</div>
+      <div class="matchbar"><div style="width:${j.match}%"></div></div>
+      <div class="matchlabel">적합도 ${j.match}% · 유사 논문 ${j.count}편 게재</div>
+      <div class="chips">
+        ${j.if2!=null?`<span class="chip">2yr citedness <b>${j.if2.toFixed(1)}</b></span>`:''}
+        ${j.h!=null?`<span class="chip">h-index <b>${j.h}</b></span>`:''}
+        <span class="chip ${j.oa?'oa':''}">${j.oa?'<b>Open Access</b>':'구독형'}${j.doaj?' · DOAJ':''}</span>
+        ${j.apc!=null?`<span class="chip">APC <b>$${j.apc.toLocaleString()}</b></span>`:''}
+      </div>
+      <details><summary>이 저널에 실린 유사 논문 보기 (${j.papers.length})</summary>${papers}</details>
+    </div>`;
+  });
+
+  document.getElementById('results').innerHTML = html;
+}
+
+document.getElementById('abs').addEventListener('keydown', e => {
+  if(e.key==='Enter' && (e.ctrlKey||e.metaKey)) run();
+});
+</script>
+</body>
+</html>
