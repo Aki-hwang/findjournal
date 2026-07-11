@@ -597,6 +597,7 @@ async function run(keywordsOverride){
 
   if(!keywordsOverride && !title && !abs){
     setStatus("⚠️ 제목이나 초록 중 하나는 입력해주세요.");
+    alert("제목이나 초록 중 하나는 입력해주세요.");
     return;
   }
   document.getElementById("korNotice").classList.toggle("show", hasKorean(title + " " + abs));
