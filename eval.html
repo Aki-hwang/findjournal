@@ -59,11 +59,14 @@
       <div><label for="alpha">규모 정규화 α</label><input id="alpha" type="number" value="0.35" step="0.05" min="0" max="1"></div>
       <div><label for="years">검색 기간(년)</label><input id="years" type="number" value="5" min="1" max="20"></div>
       <div><label for="seed">시드</label><input id="seed" type="number" value="20260710"></div>
+      <div><label for="evalN">오늘 평가 편수</label><input id="evalN" type="number" value="300" min="30" max="1500"></div>
       <div><label for="semN">의미 비교 표본</label><input id="semN" type="number" value="40" min="10" max="312"></div>
     </div>
-    <button id="run">▶ 벤치마크 실행</button>
+    <p class="muted" id="accCount">누적 표본 불러오는 중…</p>
+    <button id="run">▶ 벤치마크 실행 (신규 표본 누적)</button>
     <button id="sweep" class="sec">α 스윕 (재수집 없이)</button>
     <button id="sem" class="sec">🧠 의미 재랭킹 비교 (Voyage)</button>
+    <button id="exp" class="sec">⬇ 누적 표본(gold.jsonl) 내보내기</button>
     <button id="dl" class="sec">⬇ 결과 CSV</button>
     <progress id="bar" value="0" max="100"></progress>
     <p class="muted" id="stat">대기 중…</p>
@@ -110,12 +113,49 @@ const setBar = (v,m) => { const b=document.getElementById("bar"); b.max=m; b.val
 
 let GOLD = [], POOL = {}, LAST = null;
 
-/* 1. Stratified random gold set */
-async function buildGold(perField, seed){
-  GOLD = []; const seen = new Set();
+/* ── Accumulating gold set (persisted in the repo as gold.jsonl) ──────
+   Each run appends NEW random samples to a growing corpus. The corpus is
+   the fixed benchmark; a budget-bounded slice is evaluated each night so
+   OpenAlex cost stays under the daily free limit. Rolling FIFO cap keeps
+   the file (and tool payload) small; abstracts are truncated.            */
+const GOLD_URL = "https://raw.githubusercontent.com/Aki-hwang/findjournal/main/gold.jsonl";
+const ACC_CAP = 1500;   // keep most recent N papers
+const ABS_MAX = 700;    // truncate stored abstracts
+let GOLD_ACC = [];      // accumulated corpus
+const today = () => new Date().toISOString().slice(0,10);
+
+function showAcc(added){
+  const el = document.getElementById("accCount");
+  if(el) el.textContent = "누적 표본 " + GOLD_ACC.length.toLocaleString() + "편" +
+                          (added!=null ? " (이번 실행 +" + added + " 신규)" : "");
+}
+async function loadGold(){
+  try{
+    const r = await fetch(GOLD_URL + "?t=" + Date.now());
+    if(!r.ok){ GOLD_ACC = []; showAcc(); return; }
+    const text = await r.text();
+    const seen = new Set();
+    GOLD_ACC = text.split(/\r?\n/).filter(l=>l.trim()).map(l=>{ try{ return JSON.parse(l); }catch(e){ return null; } })
+                   .filter(p => p && p.title && p.srcId && !seen.has(norm(p.title)) && seen.add(norm(p.title)));
+  }catch(e){ GOLD_ACC = []; }
+  showAcc();
+}
+
+// deterministic shuffle so the nightly eval slice rotates through the corpus
+function seededPick(arr, n, seed){
+  const a = arr.slice(); let s = (seed>>>0) || 1;
+  for(let i=a.length-1;i>0;i--){ s = (s*1103515245 + 12345) & 0x7fffffff; const j = s % (i+1); [a[i],a[j]]=[a[j],a[i]]; }
+  return a.slice(0, Math.min(n, a.length));
+}
+window.__goldJSONL = () => GOLD_ACC.map(p => JSON.stringify(p)).join("\n");
+
+/* 1. Sample NEW papers, merge into the accumulated corpus, return an eval slice */
+async function buildGold(perField, seed, evalN){
+  const have = new Set(GOLD_ACC.map(p => norm(p.title)));
+  let added = 0;
   for(let i=0;i<FIELDS.length;i++){
     const f = FIELDS[i];
-    setStat(`정답지 수집 ${i+1}/${FIELDS.length} (분야 ${f})`); setBar(i+1, FIELDS.length);
+    setStat(`신규 표본 수집 ${i+1}/${FIELDS.length} (분야 ${f}) · 누적 ${GOLD_ACC.length}`); setBar(i+1, FIELDS.length);
     const u = `${API}/works?filter=primary_topic.field.id:fields/${f},type:article,has_abstract:true,`+
               `primary_location.source.is_core:true,from_publication_date:2023-06-01`+
               `&sample=${perField}&seed=${seed}&per-page=${perField}`+
@@ -126,13 +166,17 @@ async function buildGold(perField, seed){
       if(!s || !s.issn_l || !w.title) continue;
       const abs = deInvert(w.abstract_inverted_index);
       if(abs.length < 200) continue;
-      const k = norm(w.title); if(seen.has(k)) continue; seen.add(k);
-      GOLD.push({ title:w.title, abs, journal:s.display_name, srcId:s.id.split("/").pop(),
-                  field: w.primary_topic && w.primary_topic.field ? w.primary_topic.field.display_name : "?" });
+      const k = norm(w.title); if(have.has(k)) continue; have.add(k);
+      GOLD_ACC.push({ title:w.title, abs:abs.slice(0, ABS_MAX), journal:s.display_name, srcId:s.id.split("/").pop(),
+                      field: w.primary_topic && w.primary_topic.field ? w.primary_topic.field.display_name : "?", added: today() });
+      added++;
     }
     await new Promise(r=>setTimeout(r,80));
   }
-  return GOLD.length;
+  if(GOLD_ACC.length > ACC_CAP) GOLD_ACC = GOLD_ACC.slice(GOLD_ACC.length - ACC_CAP);  // FIFO
+  showAcc(added);
+  GOLD = seededPick(GOLD_ACC, evalN || 300, seed);   // budget-bounded evaluation slice
+  return { added, acc: GOLD_ACC.length, evalN: GOLD.length };
 }
 
 /* 2. Candidate pool — fetched once per paper, then reused by every scoring variant */
@@ -225,8 +269,10 @@ async function runAll(){
   try{
     const perField = +document.getElementById("perField").value;
     const years = +document.getElementById("years").value;
-    const n = await buildGold(perField, +document.getElementById("seed").value);
-    setStat(`정답지 ${n}편 · 후보 풀 수집 중…`);
+    const evalN = +document.getElementById("evalN").value || 300;
+    if(!GOLD_ACC.length) await loadGold();
+    const g = await buildGold(perField, +document.getElementById("seed").value, evalN);
+    setStat(`누적 ${g.acc}편 (+${g.added} 신규) · 오늘 평가 ${g.evalN}편 · 후보 풀 수집 중…`);
 
     let done = 0, idx = 0;
     const CONC = 4;
@@ -248,7 +294,7 @@ async function runAll(){
     LAST = [metrics(0), metrics(alpha)];
     renderTable(LAST);
     showFails(LAST[LAST.length-1]);
-    setStat(`완료 · 정답지 ${GOLD.length}편 · 저널 ${ids.size}종`);
+    setStat(`완료 · 누적 ${GOLD_ACC.length}편 · 오늘 평가 ${GOLD.length}편 · 저널 ${ids.size}종 · 아래 ‘누적 표본 내보내기’로 저장하세요`);
   }catch(e){
     setStat(e instanceof Budget ? "⛔ OpenAlex 일일 예산 소진 — UTC 자정 이후 재시도하거나 API 키를 넣으세요." : "오류: "+e.message);
   }
@@ -411,6 +457,14 @@ async function compareSemantic(){
 document.getElementById("run").addEventListener("click", runAll);
 document.getElementById("sweep").addEventListener("click", sweep);
 document.getElementById("sem").addEventListener("click", compareSemantic);
+document.getElementById("exp").addEventListener("click", () => {
+  if(!GOLD_ACC.length){ setStat("누적 표본이 없습니다. 먼저 벤치마크를 실행하세요."); return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([window.__goldJSONL()], {type:"application/x-ndjson"}));
+  a.download = "gold.jsonl"; a.click(); URL.revokeObjectURL(a.href);
+  setStat(`gold.jsonl 내보냄 (${GOLD_ACC.length}편) — 저장소 루트에 커밋하면 다음 실행부터 누적됩니다.`);
+});
+loadGold();   // pull the accumulated corpus on page load
 document.getElementById("dl").addEventListener("click", () => {
   if(!LAST){ setStat("먼저 실행하세요."); return; }
   const q = v => '"'+String(v==null?"":v).replace(/"/g,'""')+'"';
