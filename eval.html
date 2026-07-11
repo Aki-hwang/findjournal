@@ -44,14 +44,18 @@
   <div class="card">
     <label for="key">OpenAlex API 키 (선택)</label>
     <input id="key" type="text" placeholder="비워두면 공용 무료 예산" autocomplete="off">
+    <label for="vkey">Voyage API 키 (의미 재랭킹용 · 선택)</label>
+    <input id="vkey" type="text" placeholder="pa-... (브라우저에만 저장, 어디로도 전송 안 함)" autocomplete="off">
     <div class="row">
       <div><label for="perField">분야당 표본 수</label><input id="perField" type="number" value="12" min="2" max="50"></div>
       <div><label for="alpha">규모 정규화 α</label><input id="alpha" type="number" value="0.35" step="0.05" min="0" max="1"></div>
       <div><label for="years">검색 기간(년)</label><input id="years" type="number" value="5" min="1" max="20"></div>
       <div><label for="seed">시드</label><input id="seed" type="number" value="20260710"></div>
+      <div><label for="semN">의미 비교 표본</label><input id="semN" type="number" value="40" min="10" max="312"></div>
     </div>
     <button id="run">▶ 벤치마크 실행</button>
     <button id="sweep" class="sec">α 스윕 (재수집 없이)</button>
+    <button id="sem" class="sec">🧠 의미 재랭킹 비교 (Voyage)</button>
     <button id="dl" class="sec">⬇ 결과 CSV</button>
     <progress id="bar" value="0" max="100"></progress>
     <p class="muted" id="stat">대기 중…</p>
@@ -184,8 +188,9 @@ function score(p, alpha){
   return list.sort((a,b)=>b.score-a.score);
 }
 
-function metrics(alpha){
-  const rows = GOLD.map(p => {
+function metrics(alpha, subset){
+  const set = subset || GOLD;
+  const rows = set.map(p => {
     const recs = score(p, alpha);
     const rank = recs.findIndex(r => r.sid === p.srcId);
     return { title:p.title, field:p.field, truth:p.journal, rank: rank<0?null:rank+1, top1: recs[0]?recs[0].name:"-" };
@@ -258,8 +263,146 @@ function showFails(m){
     : "실패 사례 없음 🎉";
 }
 
+/* ── Stage A: semantic re-ranking with Voyage embeddings ──────────
+   Goal: does embedding-based similarity beat the hand-tuned keyword
+   ranking (α=0.35) on the SAME gold set? We rerank the already-cached
+   candidate papers by cosine similarity to the query, then aggregate
+   by journal — no new OpenAlex calls, only Voyage embedding calls.     */
+const VOYAGE = "https://api.voyageai.com/v1/embeddings";
+const VMODEL = "voyage-4-lite";
+const EMB = Object.create(null);   // norm(title) -> vector   (candidate papers)
+const QEMB = Object.create(null);  // norm(title) -> vector   (query papers)
+const vkey = () => document.getElementById("vkey").value.trim();
+
+function cosine(a, b){
+  let d=0, na=0, nb=0;
+  for(let i=0;i<a.length;i++){ d+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; }
+  return (na && nb) ? d/(Math.sqrt(na)*Math.sqrt(nb)) : 0;
+}
+
+async function embedBatch(texts){
+  // Voyage accepts up to 128 inputs per call; returns vectors in order.
+  const out = [];
+  for(let i=0;i<texts.length;i+=128){
+    const chunk = texts.slice(i, i+128).map(t => (t||"").slice(0, 8000));
+    let done = false;
+    for(let attempt=0; attempt<4 && !done; attempt++){
+      const r = await fetch(VOYAGE, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+vkey() },
+        body: JSON.stringify({ input: chunk, model: VMODEL, input_type:"document" })
+      });
+      if(r.status === 429){ await new Promise(s=>setTimeout(s, 2500*(attempt+1))); continue; }
+      if(!r.ok) throw new Error("Voyage HTTP "+r.status+" — "+(await r.text()).slice(0,120));
+      const j = await r.json();
+      for(const d of j.data) out[i + d.index] = d.embedding;
+      done = true;
+    }
+    if(!done) throw new Error("Voyage 429 반복 — 잠시 후 다시 시도");
+    setStat(`임베딩 ${Math.min(i+128, texts.length)}/${texts.length}`); setBar(Math.min(i+128,texts.length), texts.length);
+  }
+  return out;
+}
+
+async function ensureSemEmbeddings(subset){
+  // Collect every text we still need a vector for, then embed in one pass.
+  const need = [];       // {text, kind:'q'|'c', key}
+  const queued = new Set();
+  for(const p of subset){
+    const qk = norm(p.title);
+    if(!QEMB[qk] && !queued.has("q"+qk)){ queued.add("q"+qk); need.push({ text:(p.title+" "+p.abs).slice(0,4000), kind:"q", key:qk }); }
+    const cached = POOL[qk];
+    if(!cached) continue;
+    for(const w of cached.works){
+      const ck = norm(w.t);
+      if(!EMB[ck] && !queued.has("c"+ck)){ queued.add("c"+ck); need.push({ text:w.t, kind:"c", key:ck }); }
+    }
+  }
+  if(!need.length) return;
+  setStat(`Voyage 임베딩 대상 ${need.length}개`);
+  const vecs = await embedBatch(need.map(n => n.text));
+  need.forEach((n,i) => { if(vecs[i]) (n.kind==="q"?QEMB:EMB)[n.key] = vecs[i]; });
+}
+
+function semScore(p, sizeNorm){
+  const cached = POOL[norm(p.title)];
+  const qv = QEMB[norm(p.title)];
+  if(!cached || !qv) return [];
+  const self = norm(p.title);
+  const agg = Object.create(null);
+  for(const w of cached.works){
+    if(norm(w.t) === self || !w.sid || !w.core) continue;
+    const cv = EMB[norm(w.t)];
+    if(!cv) continue;
+    const sim = Math.max(0, cosine(qv, cv));
+    if(!agg[w.sid]) agg[w.sid] = { sid:w.sid, name:w.sname, s:0 };
+    agg[w.sid].s += sim;
+  }
+  const list = Object.values(agg);
+  for(const j of list){
+    const size = Math.max(200, SIZE[j.sid] || 2000);
+    j.score = sizeNorm ? j.s / Math.pow(size, 0.35) : j.s;
+  }
+  return list.sort((a,b) => b.score - a.score);
+}
+
+function metricsSemantic(subset, sizeNorm){
+  const rows = subset.map(p => {
+    const recs = semScore(p, sizeNorm);
+    const rank = recs.findIndex(r => r.sid === p.srcId);
+    return { rank: rank<0?null:rank+1 };
+  }).filter(r => r);
+  const hit = n => rows.filter(r=>r.rank && r.rank<=n).length / rows.length * 100;
+  const mrr = rows.reduce((s,r)=> s + (r.rank?1/r.rank:0), 0) / rows.length;
+  return { n:rows.length, r1:+hit(1).toFixed(1), r5:+hit(5).toFixed(1), r10:+hit(10).toFixed(1), r15:+hit(15).toFixed(1), mrr:+mrr.toFixed(3) };
+}
+
+async function compareSemantic(){
+  const btn = document.getElementById("sem"); btn.disabled = true;
+  try{
+    if(!Object.keys(POOL).length) throw new Error("먼저 ‘벤치마크 실행’으로 후보 풀을 캐시하세요.");
+    if(!vkey()) throw new Error("Voyage API 키를 입력하세요. https://voyageai.com 에서 무료 발급됩니다.");
+    const n = Math.min(+document.getElementById("semN").value || 40, GOLD.length);
+    const subset = GOLD.slice(0, n);
+
+    await ensureSemEmbeddings(subset);
+    setStat("의미 유사도 채점 중…");
+
+    const base = metrics(0.35, subset);                 // keyword baseline on same subset
+    const sem  = metricsSemantic(subset, false);        // pure semantic
+    const semN = metricsSemantic(subset, true);         // semantic + size normalisation
+
+    const rows = [
+      ["키워드 기준선 (α=0.35)", base.n, base.r1, base.r5, base.r10, base.r15, base.mrr],
+      ["의미 재랭킹 (순수)",      sem.n,  sem.r1,  sem.r5,  sem.r10,  sem.r15,  sem.mrr],
+      ["의미 + 규모정규화",       semN.n, semN.r1, semN.r5, semN.r10, semN.r15, semN.mrr]
+    ];
+    const best = Math.max(base.r10, sem.r10, semN.r10);
+    let h = "<table><tr><th>방식</th><th>N</th><th>R@1</th><th>@5</th><th>@10</th><th>@15</th><th>MRR</th></tr>";
+    for(const r of rows){
+      h += `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}%</td><td>${r[3]}%</td>`+
+           `<td class="${r[4]===best?'good':''}">${r[4]}%</td><td>${r[5]}%</td><td>${r[6]}</td></tr>`;
+    }
+    document.getElementById("out").innerHTML = h + "</table>";
+    const winner = base.r10>=best ? "키워드 기준선" : (sem.r10>=semN.r10 ? "의미(순수)" : "의미+규모정규화");
+    const delta = (best - base.r10).toFixed(1);
+    setStat(`완료 · 표본 ${n}편 · 최고 Recall@10 ${best}% (${winner}) · 기준선 대비 ${delta>0?"+":""}${delta}%p`);
+  }catch(e){
+    setStat("의미 비교 오류: " + e.message);
+  }
+  btn.disabled = false;
+}
+
+/* Persist keys locally so scheduled/repeat runs reuse them (browser-only). */
+[["key","jf-ax-key"],["vkey","jf-vkey"]].forEach(([id,store]) => {
+  const el = document.getElementById(id);
+  try{ const v = localStorage.getItem(store); if(v) el.value = v; }catch(e){}
+  el.addEventListener("change", () => { try{ el.value.trim() ? localStorage.setItem(store, el.value.trim()) : localStorage.removeItem(store); }catch(e){} });
+});
+
 document.getElementById("run").addEventListener("click", runAll);
 document.getElementById("sweep").addEventListener("click", sweep);
+document.getElementById("sem").addEventListener("click", compareSemantic);
 document.getElementById("dl").addEventListener("click", () => {
   if(!LAST){ setStat("먼저 실행하세요."); return; }
   const q = v => '"'+String(v==null?"":v).replace(/"/g,'""')+'"';
