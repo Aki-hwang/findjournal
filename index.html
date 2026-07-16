@@ -344,13 +344,20 @@
 
 <script>
 "use strict";
-const API = "https://api.openalex.org";
+/* 서버(server.js)가 있으면 같은 출처의 /api/oa 프록시를 사용 — 서버가 캐싱과
+   공용 API 키를 처리한다. GitHub Pages 등 정적 호스팅에서는 직접 호출로 폴백. */
+const HAS_SERVER = location.protocol.indexOf("http") === 0 && !location.hostname.endsWith("github.io");
+const API = HAS_SERVER ? "/api/oa" : "https://api.openalex.org";
 
 /* OpenAlex gives every account $1/day free at $0.001 per request (~1000 calls).
    Anonymous callers share that budget by IP. Users can paste a personal API key
    (stored only in this browser) to use their own budget. */
 function apiKey(){ try{ return localStorage.getItem("jf-apikey") || ""; }catch(e){ return ""; } }
-function authParam(){ const k = apiKey(); return k ? "api_key=" + encodeURIComponent(k) : "mailto=openalex@example.org"; }
+function authParam(){
+  const k = apiKey();
+  if(k) return "api_key=" + encodeURIComponent(k);
+  return HAS_SERVER ? "" : "mailto=openalex@example.org";
+}
 
 class BudgetError extends Error{
   constructor(retryAfter){ super("budget"); this.retryAfter = retryAfter; }
@@ -358,7 +365,8 @@ class BudgetError extends Error{
 
 /* Single fetch point so budget/rate errors surface instead of looking like "no results". */
 async function ax(url){
-  const r = await fetch(url + (url.indexOf("?") > -1 ? "&" : "?") + authParam());
+  const auth = authParam();
+  const r = await fetch(auth ? url + (url.indexOf("?") > -1 ? "&" : "?") + auth : url);
   if(r.status === 429){
     let ra = parseInt(r.headers.get("retry-after") || "0", 10);
     try{ const j = await r.clone().json(); if(j.retryAfter) ra = j.retryAfter; }catch(e){}

@@ -1,0 +1,12 @@
+{
+  "name": "findjournal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Journal Finder — 논문 제목·초록으로 게재 저널 추천",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
